@@ -16,7 +16,7 @@ var BaobabService = function ($rootScope) {
       return safeDeepClone('[circular]', [], obj);
     };
 
-    var tree = new Baobab(tree, options);
+    tree = new Baobab(tree, options);
     tree.on('update', function () {
       setTimeout(function () {
         $rootScope.$apply();
