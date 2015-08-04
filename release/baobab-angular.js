@@ -1,6 +1,5 @@
 !function(e){if("object"==typeof exports&&"undefined"!=typeof module)module.exports=e();else if("function"==typeof define&&define.amd)define([],e);else{var f;"undefined"!=typeof window?f=window:"undefined"!=typeof global?f=global:"undefined"!=typeof self&&(f=self),f.baobabangular=e()}}(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 (function (global){
-'use strict';
 
 // When requiring Angular it is added to global for some reason
 var angular = global.angular || require('angular') && global.angular;
@@ -9,6 +8,7 @@ var safeDeepClone = require('./safeDeepClone.js');
 
 // Flux Service is a wrapper for the Yahoo Dispatchr
 var BaobabService = function ($rootScope) {
+  'use strict';
 
   this.create = function (tree, options) {
     options = options || {};
@@ -18,7 +18,7 @@ var BaobabService = function ($rootScope) {
       return safeDeepClone('[circular]', [], obj);
     };
 
-    var tree = new Baobab(tree, options);
+    tree = new Baobab(tree, options);
     tree.on('update', function () {
       setTimeout(function () {
         $rootScope.$apply();
@@ -35,6 +35,8 @@ var BaobabService = function ($rootScope) {
 
 angular.module('baobab', [])
   .provider('baobab', function FluxProvider() {
+    'use strict';
+
     this.$get = ['$rootScope', function fluxFactory($rootScope) {
       return new BaobabService($rootScope);
     }];
@@ -63,19 +65,35 @@ angular.module('baobab', [])
   }]);
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./safeDeepClone.js":15,"angular":"angular","baobab":3}],2:[function(require,module,exports){
-module.exports={
-  "autoCommit": true,
-  "asynchronous": true,
-  "clone": false,
-  "cloningFunction": null,
-  "cursorSingletons": true,
-  "maxHistory": 0,
-  "mixins": [],
-  "shiftReferences": false,
-  "typology": null,
-  "validate": null
-}
+},{"./safeDeepClone.js":12,"angular":"angular","baobab":3}],2:[function(require,module,exports){
+/**
+ * Baobab Default Options
+ * =======================
+ *
+ */
+module.exports = {
+
+  // Should the tree handle its transactions on its own?
+  autoCommit: true,
+
+  // Should the transactions be handled asynchronously?
+  asynchronous: true,
+
+  // Facets registration
+  facets: {},
+
+  // Should the tree's data be immutable?
+  immutable: false,
+
+  // Validation specifications
+  validate: null,
+
+  // Validation behaviour 'rollback' or 'notify'
+  validationBehavior: 'rollback',
+
+  // Should the user be able to write the tree synchronously?
+  syncwrite: false
+};
 
 },{}],3:[function(require,module,exports){
 /**
@@ -85,12 +103,18 @@ module.exports={
  * Exposes the main library classes.
  */
 var Baobab = require('./src/baobab.js'),
+    Cursor = require('./src/cursor.js'),
+    Facet = require('./src/facet.js'),
     helpers = require('./src/helpers.js');
 
 // Non-writable version
 Object.defineProperty(Baobab, 'version', {
-  value: '0.3.2'
+  value: '1.1.2'
 });
+
+// Exposing Cursor and Facet classes
+Baobab.Cursor = Cursor;
+Baobab.Facet = Facet;
 
 // Exposing helpers
 Baobab.getIn = helpers.getIn;
@@ -98,7 +122,7 @@ Baobab.getIn = helpers.getIn;
 // Exporting
 module.exports = Baobab;
 
-},{"./src/baobab.js":6,"./src/helpers.js":9}],4:[function(require,module,exports){
+},{"./src/baobab.js":5,"./src/cursor.js":6,"./src/facet.js":7,"./src/helpers.js":8}],4:[function(require,module,exports){
 (function() {
   'use strict';
 
@@ -111,6 +135,66 @@ module.exports = Baobab;
     scope: 'object'
   };
 
+  /**
+   * Incremental id used to order event handlers.
+   */
+  var __order = 0;
+
+  /**
+   * A simple helper to shallowly merge two objects. The second one will "win"
+   * over the first one.
+   *
+   * @param  {object}  o1 First target object.
+   * @param  {object}  o2 Second target object.
+   * @return {object}     Returns the merged object.
+   */
+  function shallowMerge(o1, o2) {
+    var o = {},
+        k;
+
+    for (k in o1) o[k] = o1[k];
+    for (k in o2) o[k] = o2[k];
+
+    return o;
+  }
+
+  /**
+   * Is the given variable a plain JavaScript object?
+   *
+   * @param  {mixed}  v   Target.
+   * @return {boolean}    The boolean result.
+   */
+  function isPlainObject(v) {
+    return v &&
+           typeof v === 'object' &&
+           !Array.isArray(v) &&
+           !(v instanceof Function) &&
+           !(v instanceof RegExp);
+  }
+
+  /**
+   * Iterate over an object that may have ES6 Symbols.
+   *
+   * @param  {object}   object  Object on which to iterate.
+   * @param  {function} fn      Iterator function.
+   * @param  {object}   [scope] Optional scope.
+   */
+  function forIn(object, fn, scope) {
+    var symbols,
+        k,
+        i,
+        l;
+
+    for (k in object)
+      fn.call(scope || null, k, object[k]);
+
+    if (Object.getOwnPropertySymbols) {
+      symbols = Object.getOwnPropertySymbols(object);
+
+      for (i = 0, l = symbols.length; i < l; i++)
+        fn.call(scope || null, symbols[i], object[symbols[i]]);
+    }
+  }
 
   /**
    * The emitter's constructor. It initializes the handlers-per-events store and
@@ -123,9 +207,30 @@ module.exports = Baobab;
    */
   var Emitter = function() {
     this._enabled = true;
-    this._children = [];
+
+    // Dirty trick that will set the necessary properties to the emitter
+    this.unbindAll();
+  };
+
+  /**
+   * This method unbinds every handlers attached to every or any events. So,
+   * these functions will no more be executed when the related events are
+   * emitted. If the functions were not bound to the events, nothing will
+   * happen, and no error will be thrown.
+   *
+   * Usage:
+   * ******
+   * > myEmitter.unbindAll();
+   *
+   * @return {Emitter}      Returns this.
+   */
+  Emitter.prototype.unbindAll = function() {
+
     this._handlers = {};
     this._handlersAll = [];
+    this._handlersComplex = [];
+
+    return this;
   };
 
 
@@ -205,64 +310,60 @@ module.exports = Baobab;
         k,
         event,
         eArray,
+        handlersList,
         bindingObject;
 
-    // Variant 1 and 2:
-    if (typeof b === 'function') {
-      eArray = typeof a === 'string' ?
-        [a] :
-        a;
+    // Variant 3
+    if (isPlainObject(a)) {
+      forIn(a, function(name, fn) {
+        this.on(name, fn, b);
+      }, this);
 
-      for (i = 0, l = eArray.length; i !== l; i += 1) {
-        event = eArray[i];
+      return this;
+    }
 
-        // Check that event is not '':
-        if (!event)
-          continue;
+    // Variant 1, 2 and 4
+    if (typeof a === 'function') {
+      c = b;
+      b = a;
+      a = null;
+    }
 
-        if (!this._handlers[event])
-          this._handlers[event] = [];
+    eArray = [].concat(a);
 
-        bindingObject = {
-          handler: b
-        };
+    for (i = 0, l = eArray.length; i < l; i++) {
+      event = eArray[i];
 
-        for (k in c || {})
-          if (__allowedOptions[k])
-            bindingObject[k] = c[k];
-          else
-            throw new Error(
-              'The option "' + k + '" is not recognized by Emmett.'
-            );
-
-        this._handlers[event].push(bindingObject);
-      }
-
-    // Variant 3:
-    } else if (a && typeof a === 'object' && !Array.isArray(a))
-      for (event in a)
-        Emitter.prototype.on.call(this, event, a[event], b);
-
-    // Variant 4:
-    else if (typeof a === 'function') {
       bindingObject = {
-        handler: a
+        order: __order++,
+        fn: b
       };
 
+      // Defining the list in which the handler should be inserted
+      if (typeof event === 'string' || typeof event === 'symbol') {
+        if (!this._handlers[event])
+          this._handlers[event] = [];
+        handlersList = this._handlers[event];
+        bindingObject.type = event;
+      }
+      else if (event instanceof RegExp) {
+        handlersList = this._handlersComplex;
+        bindingObject.pattern = event;
+      }
+      else if (event === null) {
+        handlersList = this._handlersAll;
+      }
+      else {
+        throw Error('Emitter.on: invalid event.');
+      }
+
+      // Appending needed properties
       for (k in c || {})
         if (__allowedOptions[k])
           bindingObject[k] = c[k];
-        else
-          throw new Error(
-            'The option "' + k + '" is not recognized by Emmett.'
-          );
 
-      this._handlersAll.push(bindingObject);
+      handlersList.push(bindingObject);
     }
-
-    // No matching variant:
-    else
-      throw new Error('Wrong arguments.');
 
     return this;
   };
@@ -274,29 +375,16 @@ module.exports = Baobab;
    *
    * The polymorphism works exactly as with the #on method.
    */
-  Emitter.prototype.once = function(a, b, c) {
-    // Variant 1 and 2:
-    if (typeof b === 'function') {
-      c = c || {};
-      c.once = true;
-      this.on(a, b, c);
+  Emitter.prototype.once = function() {
+    var args = Array.prototype.slice.call(arguments),
+        li = args.length - 1;
 
-    // Variants 3 and 4:
-    } else if (
-      // Variant 3:
-      (a && typeof a === 'object' && !Array.isArray(a)) ||
-      // Variant 4:
-      (typeof a === 'function')
-    ) {
-      b = b || {};
-      b.once = true;
-      this.on(a, b);
+    if (isPlainObject(args[li]) && args.length > 1)
+      args[li] = shallowMerge(args[li], {once: true});
+    else
+      args.push({once: true});
 
-    // No matching variant:
-    } else
-      throw new Error('Wrong arguments.');
-
-    return this;
+    return this.on.apply(this, args);
   };
 
 
@@ -338,81 +426,116 @@ module.exports = Baobab;
    *
    * @param  {function} handler The function to unbind from every events.
    * @return {Emitter}          Returns this.
+   *
+   * Variant 5:
+   * **********
+   * > myEmitter.off(event);
+   *
+   * @param  {string} event     The event we should unbind.
+   * @return {Emitter}          Returns this.
    */
-  Emitter.prototype.off = function(events, handler) {
+  function filter(target, fn) {
+    target = target || [];
+
+    var a = [],
+        l,
+        i;
+
+    for (i = 0, l = target.length; i < l; i++)
+      if (target[i].fn !== fn)
+        a.push(target[i]);
+
+    return a;
+  }
+
+  Emitter.prototype.off = function(events, fn) {
     var i,
         n,
-        j,
-        m,
         k,
-        a,
-        event,
-        eArray = typeof events === 'string' ?
-          [events] :
-          events;
+        event;
 
-    if (arguments.length === 1 && typeof eArray === 'function') {
-      handler = arguments[0];
+    // Variant 4:
+    if (arguments.length === 1 && typeof events === 'function') {
+      fn = arguments[0];
 
       // Handlers bound to events:
       for (k in this._handlers) {
-        a = [];
-        for (i = 0, n = this._handlers[k].length; i !== n; i += 1)
-          if (this._handlers[k][i].handler !== handler)
-            a.push(this._handlers[k][i]);
-        this._handlers[k] = a;
+        this._handlers[k] = filter(this._handlers[k], fn);
+
+        if (this._handlers[k].length === 0)
+          delete this._handlers[k];
       }
 
-      a = [];
-      for (i = 0, n = this._handlersAll.length; i !== n; i += 1)
-        if (this._handlersAll[i].handler !== handler)
-          a.push(this._handlersAll[i]);
-      this._handlersAll = a;
+      // Generic Handlers
+      this._handlersAll = filter(this._handlersAll, fn);
+
+      // Complex handlers
+      this._handlersComplex = filter(this._handlersComplex, fn);
     }
 
+    // Variant 5
+    else if (arguments.length === 1 &&
+             (typeof events === 'string' || typeof events === 'symbol')) {
+      delete this._handlers[events];
+    }
+
+    // Variant 1 and 2:
     else if (arguments.length === 2) {
-      for (i = 0, n = eArray.length; i !== n; i += 1) {
+      var eArray = [].concat(events);
+
+      for (i = 0, n = eArray.length; i < n; i++) {
         event = eArray[i];
-        if (this._handlers[event]) {
-          a = [];
-          for (j = 0, m = this._handlers[event].length; j !== m; j += 1)
-            if (this._handlers[event][j].handler !== handler)
-              a.push(this._handlers[event][j]);
 
-          this._handlers[event] = a;
-        }
+        this._handlers[event] = filter(this._handlers[event], fn);
 
-        if (this._handlers[event] && this._handlers[event].length === 0)
+        if ((this._handlers[event] || []).length === 0)
           delete this._handlers[event];
       }
     }
 
+    // Variant 3
+    else if (isPlainObject(events)) {
+      forIn(events, this.off, this);
+    }
+
     return this;
   };
-
 
   /**
-   * This method unbinds every handlers attached to every or any events. So,
-   * these functions will no more be executed when the related events are
-   * emitted. If the functions were not bound to the events, nothing will
-   * happen, and no error will be thrown.
+   * This method retrieve the listeners attached to a particular event.
    *
-   * Usage:
-   * ******
-   * > myEmitter.unbindAll();
-   *
-   * @return {Emitter}      Returns this.
+   * @param  {?string}    Name of the event.
+   * @return {array}      Array of handler functions.
    */
-  Emitter.prototype.unbindAll = function() {
-    var k;
+  Emitter.prototype.listeners = function(event) {
+    var handlers = this._handlersAll || [],
+        complex = false,
+        h,
+        i,
+        l;
 
-    this._handlersAll = [];
-    for (k in this._handlers)
-      delete this._handlers[k];
+    if (!event)
+      throw Error('Emitter.listeners: no event provided.');
 
-    return this;
+    handlers = handlers.concat(this._handlers[event] || []);
+
+    for (i = 0, l = this._handlersComplex.length; i < l; i++) {
+      h = this._handlersComplex[i];
+
+      if (~event.search(h.pattern)) {
+        complex = true;
+        handlers.push(h);
+      }
+    }
+
+    // If we have any complex handlers, we need to sort
+    if (this._handlersAll.length || complex)
+      return handlers.sort(function(a, b) {
+        return a.order - b.order;
+      });
+    else
+      return handlers.slice(0);
   };
-
 
   /**
    * This method emits the specified event(s), and executes every handlers bound
@@ -424,61 +547,64 @@ module.exports = Baobab;
    * > myEmitter.emit('myEvent', myData);
    * > myEmitter.emit(['myEvent1', 'myEvent2']);
    * > myEmitter.emit(['myEvent1', 'myEvent2'], myData);
+   * > myEmitter.emit({myEvent1: myData1, myEvent2: myData2});
    *
    * @param  {string|array} events The event(s) to emit.
    * @param  {object?}      data   The data.
    * @return {Emitter}             Returns this.
    */
   Emitter.prototype.emit = function(events, data) {
-    var i,
-        n,
-        j,
-        m,
-        a,
-        event,
-        child,
-        handlers,
-        eventName,
-        self = this,
-        eArray = typeof events === 'string' ?
-          [events] :
-          events;
 
-    // Check that the emitter is enabled:
+    // Short exit if the emitter is disabled
     if (!this._enabled)
       return this;
 
-    data = data === undefined ? {} : data;
-
-    for (i = 0, n = eArray.length; i !== n; i += 1) {
-      eventName = eArray[i];
-      handlers = (this._handlers[eventName] || []).concat(this._handlersAll);
-
-      if (handlers.length) {
-        event = {
-          type: eventName,
-          data: data || {},
-          target: this
-        };
-        a = [];
-
-        for (j = 0, m = handlers.length; j !== m; j += 1) {
-          handlers[j].handler.call(
-            'scope' in handlers[j] ? handlers[j].scope : this,
-            event
-          );
-          if (!handlers[j].once)
-            a.push(handlers[j]);
-        }
-
-        this._handlers[eventName] = a;
-      }
+    // Object variant
+    if (isPlainObject(events)) {
+      forIn(events, this.emit, this);
+      return this;
     }
 
-    // Events propagation:
-    for (i = 0, n = this._children.length; i !== n; i += 1) {
-      child = this._children[i];
-      child.emit.apply(child, arguments);
+    var eArray = [].concat(events),
+        onces = [],
+        event,
+        parent,
+        handlers,
+        handler,
+        i,
+        j,
+        l,
+        m;
+
+    for (i = 0, l = eArray.length; i < l; i++) {
+      handlers = this.listeners(eArray[i]);
+
+      for (j = 0, m = handlers.length; j < m; j++) {
+        handler = handlers[j];
+        event = {
+          type: eArray[i],
+          target: this
+        };
+
+        if (arguments.length > 1)
+          event.data = data;
+
+        handler.fn.call('scope' in handler ? handler.scope : this, event);
+
+        if (handler.once)
+          onces.push(handler);
+      }
+
+      // Cleaning onces
+      for (j = onces.length - 1; j >= 0; j--) {
+        parent = onces[j].type ?
+          this._handlers[onces[j].type] :
+          onces[j].pattern ?
+            this._handlersComplex :
+            this._handlersAll;
+
+        parent.splice(parent.indexOf(onces[j]), 1);
+      }
     }
 
     return this;
@@ -486,49 +612,24 @@ module.exports = Baobab;
 
 
   /**
-   * This method creates a new instance of Emitter and binds it as a child. Here
-   * is what children do:
-   *  - When the parent emits an event, the children will emit the same later
-   *  - When a child is killed, it is automatically unreferenced from the parent
-   *  - When the parent is killed, all children will be killed as well
-   *
-   * @return {Emitter} Returns the fresh new child.
-   */
-  Emitter.prototype.child = function() {
-    var self = this,
-        child = new Emitter();
-
-    child.on('emmett:kill', function() {
-      if (self._children)
-        for (var i = 0, l = self._children.length; i < l; i++)
-          if (self._children[i] === child) {
-            self._children.splice(i, 1);
-            break;
-          }
-    });
-    this._children.push(child);
-
-    return child;
-  };
-
-
-  /**
-   * This method will first dispatch a "emmett:kill" event, and then unbinds all
-   * listeners and make it impossible to ever rebind any listener to any event.
+   * This method will unbind all listeners and make it impossible to ever
+   * rebind any listener to any event.
    */
   Emitter.prototype.kill = function() {
-    this.emit('emmett:kill');
 
     this.unbindAll();
     this._handlers = null;
     this._handlersAll = null;
+    this._handlersComplex = null;
     this._enabled = false;
 
-    if (this._children)
-      for (var i = 0, l = this._children.length; i < l; i++)
-        this._children[i].kill();
-
-    this._children = null;
+    // Nooping methods
+    this.unbindAll =
+    this.on =
+    this.once =
+    this.off =
+    this.emit =
+    this.listeners = Function.prototype;
   };
 
 
@@ -560,7 +661,7 @@ module.exports = Baobab;
   /**
    * Version:
    */
-  Emitter.version = '2.1.1';
+  Emitter.version = '3.1.1';
 
 
   // Export:
@@ -578,608 +679,6 @@ module.exports = Baobab;
 
 },{}],5:[function(require,module,exports){
 /**
- * typology.js - A data validation library for Node.js and the browser,
- *
- * Version: 0.3.1
- * Sources: http://github.com/jacomyal/typology
- * Doc:     http://github.com/jacomyal/typology#readme
- *
- * License:
- * --------
- * Copyright © 2014 Alexis Jacomy (@jacomyal), Guillaume Plique (@Yomguithereal)
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * The Software is provided "as is", without warranty of any kind, express or
- * implied, including but not limited to the warranties of merchantability,
- * fitness for a particular purpose and noninfringement. In no event shall the
- * authors or copyright holders be liable for any claim, damages or other
- * liability, whether in an action of contract, tort or otherwise, arising
- * from, out of or in connection with the software or the use or other dealings
- * in the Software.
- */
-(function(global) {
-  'use strict';
-
-  /**
-   * Code conventions:
-   * *****************
-   *  - 80 characters max per line
-   *  - Write "__myVar" for any global private variable
-   *  - Write "_myVar" for any instance private variable
-   *  - Write "myVar" any local variable
-   */
-
-
-
-  /**
-   * PRIVATE GLOBALS:
-   * ****************
-   */
-
-  /**
-   * This object is a dictionnary that maps "[object Something]" strings to the
-   * typology form "something":
-   */
-  var __class2type = {};
-
-  /**
-   * This array is the list of every types considered native by typology:
-   */
-  var __nativeTypes = ['*'];
-
-  (function() {
-    var k,
-        className,
-        classes = [
-          'Arguments',
-          'Boolean',
-          'Number',
-          'String',
-          'Function',
-          'Array',
-          'Date',
-          'RegExp',
-          'Object'
-        ];
-
-    // Fill types
-    for (k in classes) {
-      className = classes[k];
-      __nativeTypes.push(className.toLowerCase());
-      __class2type['[object ' + className + ']'] = className.toLowerCase();
-    }
-  })();
-
-
-
-  /**
-   * CONSTRUCTOR:
-   * ************
-   */
-  function Typology(defs) {
-    /**
-     * INSTANCE PRIVATES:
-     * ******************
-     */
-
-    var _self = this;
-
-    /**
-     * This objects will contain every instance-specific custom types:
-     */
-    var _customTypes = {};
-
-    /**
-     * This function will recursively scan an object to check wether or not it
-     * matches a given type. It will return null if it matches, and an Error
-     * object else.
-     *
-     * Examples:
-     * *********
-     * 1. When the type matches:
-     *  > _scan('abc', 'string');
-     *  will return null.
-     *
-     * 2. When a top-level type does not match:
-     *  > _scan('abc', 'number');
-     *  will return an Error object with the following information:
-     *   - message: Expected a "number" but found a "string".
-     *
-     * 3. When a sub-object type does not its type:
-     *  > _scan({ a: 'abc' }, { a: 'number' });
-     *  will return an Error object with the following information:
-     *   - message: Expected a "number" but found a "string".
-     *   - path: [ 'a' ]
-     *
-     * 4. When a deep sub-object type does not its type:
-     *  > _scan({ a: [ 123, 'abc' ] }, { a: ['number'] });
-     *  will return an Error object with the following information:
-     *   - message: Expected a "number" but found a "string".
-     *   - path: [ 'a', 1 ]
-     *
-     * 5. When a required key is missing:
-     *  > _scan({}, { a: 'number' });
-     *  will return an Error object with the following information:
-     *   - message: Expected a "number" but found a "undefined".
-     *   - path: [ 'a' ]
-     *
-     * 6. When an unexpected key is present:
-     *  > _scan({ a: 123, b: 456 }, { a: 'number' });
-     *  will return an Error object with the following information:
-     *   - message: Unexpected key "b".
-     *
-     * @param  {*}      obj  The value to validate.
-     * @param  {type}   type The type.
-     * @return {?Error}      Returns null or an Error object.
-     */
-    function _scan(obj, type) {
-      var a,
-          i,
-          l,
-          k,
-          error,
-          subError,
-          hasStar,
-          hasTypeOf,
-          optional = false,
-          exclusive = false,
-          typeOf = _self.get(obj);
-
-      if (_self.get(type) === 'string') {
-        a = type.replace(/^[\?\!]/, '').split(/\|/);
-        l = a.length;
-        for (i = 0; i < l; i++)
-          if (__nativeTypes.indexOf(a[i]) < 0 && !(a[i] in _customTypes))
-            throw new Error('Invalid type.');
-
-        if (type.match(/^\?/))
-          optional = true;
-
-        if (type.replace(/^\?/, '').match(/^\!/))
-          exclusive = true;
-
-        if (exclusive && optional)
-          throw new Error('Invalid type.');
-
-        for (i in a)
-          if (_customTypes[a[i]])
-            if (
-              (typeof _customTypes[a[i]].type === 'function') ?
-                (_customTypes[a[i]].type.call(_self, obj) === true) :
-                !_scan(obj, _customTypes[a[i]].type)
-            ) {
-              if (exclusive) {
-                error = new Error();
-                error.message = 'Expected a "' + type + '" but found a ' +
-                                '"' + a[i] + '".';
-              error.expected = type;
-              error.type = a[i];
-              error.value = obj;
-                return error;
-              } else
-                return null;
-            }
-
-        if (obj === null || obj === undefined) {
-          if (!exclusive && !optional) {
-            error = new Error();
-            error.message = 'Expected a "' + type + '" but found a ' +
-                            '"' + typeOf + '".';
-            error.expected = type;
-            error.type = typeOf;
-            error.value = obj;
-            return error;
-          } else
-            return null;
-
-        } else {
-          hasStar = ~a.indexOf('*');
-          hasTypeOf = ~a.indexOf(typeOf);
-          if (exclusive && (hasStar || hasTypeOf)) {
-            error = new Error();
-            error.message = 'Expected a "' + type + '" but found a ' +
-                            '"' + (hasTypeOf ? typeOf : '*') + '".';
-            error.type = hasTypeOf ? typeOf : '*';
-            error.expected = type;
-            error.value = obj;
-            return error;
-
-          } else if (!exclusive && !(hasStar || hasTypeOf)) {
-            error = new Error();
-            error.message = 'Expected a "' + type + '" but found a ' +
-                            '"' + typeOf + '".';
-            error.expected = type;
-            error.type = typeOf;
-            error.value = obj;
-            return error;
-
-          } else
-            return null;
-        }
-
-      } else if (_self.get(type) === 'object') {
-        if (typeOf !== 'object') {
-          error = new Error();
-          error.message = 'Expected an object but found a "' + typeOf + '".';
-          error.expected = type;
-          error.type = typeOf;
-          error.value = obj;
-          return error;
-        }
-
-        for (k in type)
-          if ((subError = _scan(obj[k], type[k]))) {
-            error = subError;
-            error.path = error.path ?
-              [k].concat(error.path) :
-              [k];
-            return error;
-          }
-
-        for (k in obj)
-          if (type[k] === undefined) {
-            error = new Error();
-            error.message = 'Unexpected key "' + k + '".';
-            error.type = typeOf;
-            error.value = obj;
-            return error;
-          }
-
-        return null;
-
-      } else if (_self.get(type) === 'array') {
-        if (type.length !== 1)
-          throw new Error('Invalid type.');
-
-        if (typeOf !== 'array') {
-          error = new Error();
-          error.message = 'Expected an array but found a "' + typeOf + '".';
-          error.expected = type;
-          error.type = typeOf;
-          error.value = obj;
-          return error;
-        }
-
-        l = obj.length;
-        for (i = 0; i < l; i++)
-          if ((subError = _scan(obj[i], type[0]))) {
-            error = subError;
-            error.path = error.path ?
-              [i].concat(error.path) :
-              [i];
-            return error;
-          }
-
-        return null;
-      } else
-        throw new Error('Invalid type.');
-    }
-
-
-
-    /**
-     * INSTANCE METHODS:
-     * *****************
-     */
-
-    /**
-     * This method registers a custom type into the Typology instance. A type
-     * is registered under a unique name, and is described by an object (like
-     * classical C structures) or a function.
-     *
-     * Variant 1:
-     * **********
-     * > types.add('user', { id: 'string', name: '?string' });
-     *
-     * @param  {string}   id   The unique id of the type.
-     * @param  {object}   type The corresponding structure.
-     * @return {Typology}      Returns this.
-     *
-     * Variant 2:
-     * **********
-     * > types.add('integer', function(value) {
-     * >   return typeof value === 'number' && value === value | 0;
-     * > });
-     *
-     * @param  {string}   id   The unique id of the type.
-     * @param  {function} type The function validating the type.
-     * @return {Typology}      Returns this.
-     *
-     * Variant 3:
-     * **********
-     * > types.add({
-     * >   id: 'user',
-     * >   type: { id: 'string', name: '?string' }
-     * > });
-     *
-     * > types.add({
-     * >   id: 'integer',
-     * >   type: function(value) {
-     * >     return typeof value === 'number' && value === value | 0;
-     * >   }
-     * > });
-     *
-     * @param  {object}   specs An object describing fully the type.
-     * @return {Typology}       Returns this.
-     *
-     * Recognized parameters:
-     * **********************
-     * Here is the exhaustive list of every accepted parameters in the specs
-     * object:
-     *
-     *   {string}          id    The unique id of the type.
-     *   {function|object} type  The function or the structure object
-     *                           validating the type.
-     *   {?[string]}       proto Eventually an array of ids of types that are
-     *                           referenced in the structure but do not exist
-     *                           yet.
-     */
-    this.add = function(a1, a2) {
-      var o,
-          k,
-          a,
-          id,
-          tmp,
-          type;
-
-      // Polymorphism:
-      if (arguments.length === 1) {
-        if (this.get(a1) === 'object') {
-          o = a1;
-          id = o.id;
-          type = o.type;
-        } else
-          throw new Error('If types.add is called with one argument, ' +
-                          'this one has to be an object.');
-      } else if (arguments.length === 2) {
-        if (typeof a1 !== 'string' || !a1)
-          throw new Error('If types.add is called with more than one ' +
-                          'argument, the first one must be the string id.');
-        else
-          id = a1;
-
-        type = a2;
-      } else
-        throw new Error('types.add has to be called ' +
-                        'with one or two arguments.');
-
-      if (this.get(id) !== 'string' || id.length === 0)
-        throw new Error('A type requires an string id.');
-
-      if (_customTypes[id] !== undefined && _customTypes[id] !== 'proto')
-        throw new Error('The type "' + id + '" already exists.');
-
-      if (~__nativeTypes.indexOf(id))
-        throw new Error('"' + id + '" is a reserved type name.');
-
-      _customTypes[id] = 1;
-
-      // Check given prototypes:
-      a = (o || {}).proto || [];
-      a = Array.isArray(a) ? a : [a];
-      tmp = {};
-      for (k in a)
-        if (_customTypes[a[k]] === undefined) {
-          _customTypes[a[k]] = 1;
-          tmp[a[k]] = 1;
-        }
-
-      if ((this.get(type) !== 'function') && !this.isValid(type))
-        throw new Error('A type requires a valid definition. ' +
-                        'This one can be a preexistant type or else ' +
-                        'a function testing given objects.');
-
-      // Effectively add the type:
-      _customTypes[id] = (o === undefined) ?
-        {
-          id: id,
-          type: type
-        } :
-        {};
-
-      if (o !== undefined)
-        for (k in o)
-          _customTypes[id][k] = o[k];
-
-      // Delete prototypes:
-      for (k in tmp)
-        if (k !== id)
-          delete _customTypes[k];
-
-      return this;
-    };
-
-    /**
-     * This method returns true if a custom type is already registered in this
-     * instance under the given key.
-     *
-     * @param  {string}  key A type name.
-     * @return {boolean}     Returns true if the key is registered.
-     */
-    this.has = function(key) {
-      return !!_customTypes[key];
-    };
-
-    /**
-     * This method returns the native type of a given value.
-     *
-     * Examples:
-     * *********
-     * > types.get({ a: 1 }); // returns "object"
-     * > types.get('abcde');  // returns "string"
-     * > types.get(1234567);  // returns "number"
-     * > types.get([1, 2]);   // returns "array"
-     *
-     * @param  {*}      value Anything.
-     * @return {string}       Returns the native type of the value.
-     */
-    this.get = function(obj) {
-      return (obj === null || obj === undefined) ?
-        String(obj) :
-        __class2type[Object.prototype.toString.call(obj)] || 'object';
-    };
-
-    /**
-     * This method validates some value against a given type. If the flag throws
-     * has a truthy value, then the method will throw an error instead of
-     * returning false.
-     *
-     * To know more about the error thrown, you can read the documentation of
-     * the private method _scan.
-     *
-     * Examples:
-     * *********
-     * > types.check({ a: 1 }, 'object');                      // returns true
-     * > types.check({ a: 1 }, { a: 'string' });               // returns true
-     * > types.check({ a: 1 }, { a: 'string', b: '?number' }); // returns true
-     *
-     * > types.check({ a: 1 }, { a: 'string', b: 'number' }); // returns false
-     * > types.check({ a: 1 }, { a: 'number' });              // returns false
-     * > types.check({ a: 1 }, 'array');                      // returns false
-     *
-     * > types.check({ a: 1 }, 'array', true); // throws an Error
-     *
-     * @param  {*}        value  Anything.
-     * @param  {type}     type   A valid type.
-     * @param  {?boolean} throws If true, this method will throw an error
-     *                           instead of returning false.
-     * @return {boolean}         Returns true if the value matches the type, and
-     *                           not else.
-     */
-    this.check = function(obj, type, throws) {
-      var result = _scan(obj, type);
-      if (throws && result)
-        throw result;
-      else
-        return !result;
-    };
-
-    /**
-     * This method validates a type. If the type is not referenced or is not
-     * valid, it will return false.
-     *
-     * To know more about that function, don't hesitate to read the related
-     * unit tests.
-     *
-     * Examples:
-     * *********
-     * > types.isValid('string');        // returns true
-     * > types.isValid('?string');       // returns true
-     * > types.isValid('!string');       // returns true
-     * > types.isValid('string|number'); // returns true
-     * > types.isValid({ a: 'string' }); // returns true
-     * > types.isValid(['string']);      // returns true
-     *
-     * > types.isValid('!?string');                // returns false
-     * > types.isValid('myNotDefinedType');        // returns false
-     * > types.isValid(['myNotDefinedType']);      // returns false
-     * > types.isValid({ a: 'myNotDefinedType' }); // returns false
-     *
-     * > types.isValid('user');               // returns false
-     * > types.add('user', { id: 'string' }); // makes the type become valid
-     * > types.isValid('user');               // returns true
-     *
-     * @param  {*}       type The type to get checked.
-     * @return {boolean}      Returns true if the type is valid, and false else.
-     */
-    this.isValid = function(type) {
-      var a,
-          k,
-          i;
-
-      if (this.get(type) === 'string') {
-        a = type.replace(/^[\?\!]/, '').split(/\|/);
-        for (i in a)
-          if (__nativeTypes.indexOf(a[i]) < 0 && !(a[i] in _customTypes))
-            return false;
-        return true;
-
-      } else if (this.get(type) === 'object') {
-        for (k in type)
-          if (!this.isValid(type[k]))
-            return false;
-        return true;
-
-      } else if (this.get(type) === 'array')
-        return type.length === 1 ?
-          this.isValid(type[0]) :
-          false;
-      else
-        return false;
-    };
-
-
-
-    /**
-     * INSTANTIATION ROUTINE:
-     * **********************
-     */
-
-    // Add a type "type" to shortcut the #isValid method:
-    this.add('type', (function(v) {
-      return this.isValid(v);
-    }).bind(this));
-
-    // Add a type "primitive" to match every primitive types (including null):
-    this.add('primitive', function(v) {
-      return !v || !(v instanceof Object || typeof v === 'object');
-    });
-
-    // Adding custom types at instantiation:
-    defs = defs || {};
-    if (this.get(defs) !== 'object')
-      throw Error('Invalid argument.');
-
-    for (var k in defs)
-      this.add(k, defs[k]);
-  }
-
-
-
-  /**
-   * GLOBAL PUBLIC API:
-   * ******************
-   */
-
-  // Creating a "main" typology instance to export:
-  var types = Typology;
-  Typology.call(types);
-
-  // Version:
-  Object.defineProperty(types, 'version', {
-    value: '0.3.1'
-  });
-
-
-
-  /**
-   * EXPORT:
-   * *******
-   */
-  if (typeof exports !== 'undefined') {
-    if (typeof module !== 'undefined' && module.exports)
-      exports = module.exports = types;
-    exports.types = types;
-  } else if (typeof define === 'function' && define.amd)
-    define('typology', [], function() {
-      return types;
-    });
-  else
-    this.types = types;
-})(this);
-
-},{}],6:[function(require,module,exports){
-(function (process){
-/**
  * Baobab Data Structure
  * ======================
  *
@@ -1187,18 +686,26 @@ module.exports = Baobab;
  */
 var Cursor = require('./cursor.js'),
     EventEmitter = require('emmett'),
-    Typology = require('typology'),
+    Facet = require('./facet.js'),
     helpers = require('./helpers.js'),
     update = require('./update.js'),
     merge = require('./merge.js'),
-    mixins = require('./mixins.js'),
-    defaults = require('../defaults.json'),
+    defaults = require('../defaults.js'),
     type = require('./type.js');
+
+var uniqid = (function() {
+  var i = 0;
+  return function() {
+    return i++;
+  };
+})();
 
 /**
  * Main Class
  */
 function Baobab(initialData, opts) {
+  if (arguments.length < 1)
+    initialData = {};
 
   // New keyword optional
   if (!(this instanceof Baobab))
@@ -1212,52 +719,124 @@ function Baobab(initialData, opts) {
 
   // Merging defaults
   this.options = helpers.shallowMerge(defaults, opts);
-  this._cloner = this.options.cloningFunction || helpers.deepClone;
 
   // Privates
-  this._futureUpdate = {};
-  this._willUpdate = false;
-  this._history = [];
-  this._registeredCursors = {};
-
-  // Internal typology
-  this.typology = this.options.typology ?
-    (this.options.typology instanceof Typology ?
-      this.options.typology :
-      new Typology(this.options.typology)) :
-    new Typology();
-
-  // Internal validation
-  this.validate = this.options.validate || null;
-
-  if (this.validate)
-    try {
-      this.typology.check(initialData, this.validate, true);
-    }
-    catch (e) {
-      e.message = '/' + e.path.join('/') + ': ' + e.message;
-      throw e;
-    }
+  this._transaction = {};
+  this._future = undefined;
+  this._cursors = {};
+  this._identity = '[object Baobab]';
 
   // Properties
-  this.data = this._cloner(initialData);
+  this.log = [];
+  this.previousData = null;
+  this.data = initialData;
+  this.root = this.select();
+  this.facets = {};
 
-  // Mixin
-  this.mixin = mixins.baobab(this);
+  // Immutable tree?
+  if (this.options.immutable)
+    helpers.deepFreeze(this.data);
+
+  // Boostrapping root cursor's methods
+  function bootstrap(name) {
+    this[name] = function() {
+      var r = this.root[name].apply(this.root, arguments);
+      return r instanceof Cursor ? this : r;
+    };
+  }
+
+  [
+    'apply',
+    'chain',
+    'get',
+    'merge',
+    'push',
+    'set',
+    'splice',
+    'unset',
+    'unshift',
+    'update'
+  ].forEach(bootstrap.bind(this));
+
+  // Facets
+  if (!type.Object(this.options.facets))
+    throw Error('Baobab: invalid facets.');
+
+  for (var k in this.options.facets)
+    this.addFacet(k, this.options.facets[k]);
 }
 
 helpers.inherits(Baobab, EventEmitter);
 
 /**
- * Private prototype
+ * Prototype
  */
-Baobab.prototype._stack = function(spec) {
+Baobab.prototype.addFacet = function(name, definition, args) {
+  this.facets[name] = this.createFacet(definition, args);
+  return this;
+};
+
+Baobab.prototype.createFacet = function(definition, args) {
+  return new Facet(this, definition, args);
+};
+
+Baobab.prototype.select = function(path) {
+  path = path || [];
+
+  if (arguments.length > 1)
+    path = helpers.arrayOf(arguments);
+
+  if (!type.Path(path))
+    throw Error('Baobab.select: invalid path.');
+
+  // Casting to array
+  path = [].concat(path);
+
+  // Computing hash
+  var hash = path.map(function(step) {
+    if (type.Function(step) || type.Object(step))
+      return '$' + uniqid() + '$';
+    else
+      return step;
+  }).join('|λ|');
+
+  // Registering a new cursor or giving the already existing one for path
+  var cursor;
+  if (!this._cursors[hash]) {
+    cursor = new Cursor(this, path, hash);
+    this._cursors[hash] = cursor;
+  }
+  else {
+    cursor = this._cursors[hash];
+  }
+
+  // Emitting an event
+  this.emit('select', {path: path, cursor: cursor});
+  return cursor;
+};
+
+// TODO: if syncwrite wins: drop skipMerge, this._transaction etc.
+// TODO: uniq'ing the log through path hashing
+Baobab.prototype.stack = function(spec, skipMerge) {
   var self = this;
 
   if (!type.Object(spec))
     throw Error('Baobab.update: wrong specification.');
 
-  this._futureUpdate = merge(spec, this._futureUpdate);
+  if (!this.previousData)
+    this.previousData = this.data;
+
+  // Applying modifications
+  if (this.options.syncwrite) {
+    var result = update(this.data, spec, this.options);
+    this.data = result.data;
+    this.log = [].concat(this.log).concat(result.log);
+  }
+  else {
+    this._transaction = (skipMerge && !Object.keys(this._transaction).length) ?
+      spec :
+      merge(this._transaction, spec);
+  }
 
   // Should we let the user commit?
   if (!this.options.autoCommit)
@@ -1268,202 +847,87 @@ Baobab.prototype._stack = function(spec) {
     return this.commit();
 
   // Updating asynchronously
-  if (!this._willUpdate) {
-    this._willUpdate = true;
-    process.nextTick(function() {
-      if (self._willUpdate)
-        self.commit();
-    });
-  }
+  if (!this._future)
+    this._future = setTimeout(self.commit.bind(self, null), 0);
 
   return this;
 };
 
-Baobab.prototype._archive = function() {
-  if (this.options.maxHistory <= 0)
-    return;
+Baobab.prototype.commit = function() {
 
-  var record = {
-    data: this._cloner(this.data)
-  };
+  if (this._future)
+    this._future = clearTimeout(this._future);
 
-  // Replacing
-  if (this._history.length === this.options.maxHistory) {
-    this._history.pop();
-  }
-  this._history.unshift(record);
+  if (!this.options.syncwrite) {
 
-  return record;
-};
-
-/**
- * Prototype
- */
-Baobab.prototype.commit = function(referenceRecord) {
-  var self = this,
-      log;
-
-  if (referenceRecord) {
-
-    // Override
-    this.data = referenceRecord.data;
-    log = referenceRecord.log;
-  }
-  else {
-
-    // Shifting root reference
-    if (this.options.shiftReferences)
-      this.data = helpers.shallowClone(this.data);
-
-    // Applying modification (mutation)
-    var record = this._archive();
-    log = update(this.data, this._futureUpdate, this.options);
-
-    if (record)
-      record.log = log;
+    // Applying the asynchronous transaction
+    var result = update(this.data, this._transaction, this.options);
+    this.data = result.data;
+    this.log = result.log;
   }
 
-  if (this.validate) {
-    var errors = [],
-        l = log.length,
-        d,
-        i;
+  // Resetting transaction
+  this._transaction = {};
 
-    for (i = 0; i < l; i++) {
-      d = helpers.getIn(this.validate, log[i]);
+  // Validate?
+  var validate = this.options.validate,
+      behavior = this.options.validationBehavior;
 
-      if (!d)
-        continue;
+  if (typeof validate === 'function') {
+    var error = validate.call(this, this.previousData, this.data, this.log);
 
-      try {
-        this.typology.check(this.get(log[i]), d, true);
-      }
-      catch (e) {
-        e.path = log[i].concat((e.path || []));
-        errors.push(e);
+    if (error instanceof Error) {
+      this.emit('invalid', {error: error});
+
+      if (behavior === 'rollback') {
+        this.data = this.previousData;
+        return this;
       }
     }
-
-    if (errors.length)
-      this.emit('invalid', {errors: errors});
   }
 
   // Baobab-level update event
   this.emit('update', {
-    log: log
+    log: this.log,
+    previousData: this.previousData,
+    data: this.data
   });
 
-  // Resetting
-  this._futureUpdate = {};
-  this._willUpdate = false;
+  this.log = [];
+  this.previousData = null;
 
   return this;
 };
 
-Baobab.prototype.select = function(path) {
-  if (arguments.length > 1)
-    path = helpers.arrayOf(arguments);
-
-  if (!type.Path(path))
-    throw Error('Baobab.select: invalid path.');
-
-  // Casting to array
-  path = !type.Array(path) ? [path] : path;
-
-  // Complex path?
-  var complex = type.ComplexPath(path);
-
-  var solvedPath;
-
-  if (complex)
-    solvedPath = helpers.solvePath(this.data, path);
-
-  // Registering a new cursor or giving the already existing one for path
-  if (!this.options.cursorSingletons) {
-    return new Cursor(this, path);
-  }
-  else {
-    var hash = path.join('λ');
-
-    if (!this._registeredCursors[hash]) {
-      var cursor = new Cursor(this, path, solvedPath);
-      this._registeredCursors[hash] = cursor;
-      return cursor;
-    }
-    else {
-      return this._registeredCursors[hash];
-    }
-  }
-};
-
-Baobab.prototype.reference = function(path) {
-  var data;
-
-  if (arguments.length > 1)
-    path = helpers.arrayOf(arguments);
-
-  if (!type.Path(path))
-    throw Error('Baobab.get: invalid path.');
-
-  return helpers.getIn(
-    this.data, type.String(path) || type.Number(path) ? [path] : path
-  );
-};
-
-Baobab.prototype.get = function() {
-  var ref = this.reference.apply(this, arguments);
-
-  return this.options.clone ? this._cloner(ref) : ref;
-};
-
-Baobab.prototype.clone = function(path) {
-  return this._cloner(this.reference.apply(this, arguments));
-};
-
-Baobab.prototype.set = function(key, val) {
-
-  if (arguments.length < 2)
-    throw Error('Baobab.set: expects a key and a value.');
-
-  var spec = {};
-  spec[key] = {$set: val};
-
-  return this.update(spec);
-};
-
-Baobab.prototype.update = function(spec) {
-  return this._stack(spec);
-};
-
-Baobab.prototype.hasHistory = function() {
-  return !!this._history.length;
-};
-
-Baobab.prototype.getHistory = function() {
-  return this._history;
-};
-
-Baobab.prototype.undo = function() {
-  if (!this.hasHistory())
-    throw Error('Baobab.undo: no history recorded, cannot undo.');
-
-  var lastRecord = this._history.shift();
-  this.commit(lastRecord);
-};
-
 Baobab.prototype.release = function() {
-  this.unbindAll();
+  var k;
+
   delete this.data;
-  delete this._futureUpdate;
-  delete this._history;
-  delete this._registeredCursors;
+  delete this._transaction;
+
+  // Releasing cursors
+  for (k in this._cursors)
+    this._cursors[k].release();
+  delete this._cursors;
+
+  // Releasing facets
+  for (k in this.facets)
+    this.facets[k].release();
+  delete this.facets;
+
+  // Killing event emitter
+  this.kill();
 };
 
 /**
  * Output
  */
 Baobab.prototype.toJSON = function() {
-  return this.reference();
+  return this.get();
+};
+
+Baobab.prototype.toString = function() {
+  return this._identity;
 };
 
 /**
@@ -1471,146 +935,7 @@ Baobab.prototype.toJSON = function() {
  */
 module.exports = Baobab;
 
-}).call(this,require('_process'))
-},{"../defaults.json":2,"./cursor.js":8,"./helpers.js":9,"./merge.js":10,"./mixins.js":11,"./type.js":12,"./update.js":13,"_process":14,"emmett":4,"typology":5}],7:[function(require,module,exports){
-/**
- * Baobab Cursor Combination
- * ==========================
- *
- * A useful abstraction dealing with cursor's update logical combinations.
- */
-var EventEmitter = require('emmett'),
-    helpers = require('./helpers.js'),
-    type = require('./type.js');
-
-/**
- * Utilities
- */
-function bindCursor(c, cursor) {
-  cursor.on('update', c.cursorListener);
-}
-
-/**
- * Main Class
- */
-function Combination(operator /*, &cursors */) {
-  var self = this;
-
-  // Safeguard
-  if (arguments.length < 2)
-    throw Error('baobab.Combination: not enough arguments.');
-
-  var first = arguments[1],
-      rest = helpers.arrayOf(arguments).slice(2);
-
-  if (first instanceof Array) {
-    rest = first.slice(1);
-    first = first[0];
-  }
-
-  if (!type.Cursor(first))
-    throw Error('baobab.Combination: argument should be a cursor.');
-
-  if (operator !== 'or' && operator !== 'and')
-    throw Error('baobab.Combination: invalid operator.');
-
-  // Extending event emitter
-  EventEmitter.call(this);
-
-  // Properties
-  this.cursors = [first];
-  this.operators = [];
-  this.root = first.root;
-
-  // State
-  this.updates = new Array(this.cursors.length);
-
-  // Listeners
-  this.cursorListener = function() {
-    self.updates[self.cursors.indexOf(this)] = true;
-  };
-
-  this.treeListener = function() {
-    var shouldFire = self.updates[0],
-        i,
-        l;
-
-    for (i = 1, l = self.cursors.length; i < l; i++) {
-      shouldFire = self.operators[i - 1] === 'or' ?
-        shouldFire || self.updates[i] :
-        shouldFire && self.updates[i];
-    }
-
-    if (shouldFire)
-      self.emit('update');
-
-    // Waiting for next update
-    self.updates = new Array(self.cursors.length);
-  };
-
-  // Initial bindings
-  this.root.on('update', this.treeListener);
-  bindCursor(this, first);
-
-  // Attaching any other passed cursors
-  rest.forEach(function(cursor) {
-    this[operator](cursor);
-  }, this);
-}
-
-helpers.inherits(Combination, EventEmitter);
-
-/**
- * Prototype
- */
-function makeOperator(operator) {
-  Combination.prototype[operator] = function(cursor) {
-
-    // Safeguard
-    if (!type.Cursor(cursor))
-      throw Error('baobab.Combination.' + operator + ': argument should be a cursor.');
-
-    if (~this.cursors.indexOf(cursor))
-      throw Error('baobab.Combination.' + operator + ': cursor already in combination.');
-
-    this.cursors.push(cursor);
-    this.operators.push(operator);
-    this.updates.length++;
-    bindCursor(this, cursor);
-
-    return this;
-  };
-}
-
-makeOperator('or');
-makeOperator('and');
-
-Combination.prototype.release = function() {
-
-  // Dropping own listeners
-  this.unbindAll();
-
-  // Dropping cursors listeners
-  this.cursors.forEach(function(cursor) {
-    cursor.off('update', this.cursorListener);
-  }, this);
-
-  // Dropping tree listener
-  this.root.off('update', this.treeListener);
-
-  // Cleaning
-  this.cursors = null;
-  this.operators = null;
-  this.root = null;
-  this.updates = null;
-};
-
-/**
- * Exporting
- */
-module.exports = Combination;
-
-},{"./helpers.js":9,"./type.js":12,"emmett":4}],8:[function(require,module,exports){
+},{"../defaults.js":2,"./cursor.js":6,"./facet.js":7,"./helpers.js":8,"./merge.js":9,"./type.js":10,"./update.js":11,"emmett":4}],6:[function(require,module,exports){
 /**
  * Baobab Cursor Abstraction
  * ==========================
@@ -1618,78 +943,96 @@ module.exports = Combination;
  * Nested selection into a baobab tree.
  */
 var EventEmitter = require('emmett'),
-    Combination = require('./combination.js'),
-    mixins = require('./mixins.js'),
     helpers = require('./helpers.js'),
+    defaults = require('../defaults.js'),
     type = require('./type.js');
 
 /**
  * Main Class
  */
-function Cursor(root, path, solvedPath) {
+function Cursor(tree, path, hash) {
   var self = this;
 
   // Extending event emitter
   EventEmitter.call(this);
 
   // Enforcing array
-  path = path || [];
+  path = path || [];
+
+  // Privates
+  this._identity = '[object Cursor]';
+  this._additionnalPaths = [];
 
   // Properties
-  this.root = root;
+  this.tree = tree;
   this.path = path;
-  this.relevant = this.reference() !== undefined;
+  this.hash = hash;
+  this.archive = null;
+  this.recording = false;
+  this.undoing = false;
 
-  // Complex path?
-  this.complexPath = !!solvedPath;
-  this.solvedPath = this.complexPath ? solvedPath : this.path;
+  // Path initialization
+  this.complex = type.ComplexPath(path);
+  this.solvedPath = path;
+
+  if (this.complex)
+    this.solvedPath = helpers.solvePath(this.tree.data, path, this.tree);
+
+  if (this.complex)
+    path.forEach(function(step) {
+      if (type.Object(step) && '$cursor' in step)
+        this._additionnalPaths.push(step.$cursor);
+    }, this);
+
+  // Relevant?
+  this.relevant = this.get(false) !== undefined;
 
   // Root listeners
+  function update(previousData) {
+    var record = helpers.getIn(previousData, self.solvedPath, self.tree);
+
+    if (self.recording && !self.undoing) {
+
+      // Handle archive
+      self.archive.add(record);
+    }
+
+    self.undoing = false;
+    return self.emit('update', {
+      data: self.get(false),
+      previousData: record
+    });
+  }
+
   this.updateHandler = function(e) {
     var log = e.data.log,
+        previousData = e.data.previousData,
         shouldFire = false,
         c, p, l, m, i, j;
 
     // Solving path if needed
-    if (self.complexPath)
-      self.solvedPath = helpers.solvePath(self.root.data, self.path);
+    if (self.complex)
+      self.solvedPath = helpers.solvePath(self.tree.data, self.path, self.tree);
 
-    // If no handlers are attached, we stop
-    if (!this._handlers.update.length && !this._handlersAll.length)
-      return;
-
-    // If selector listens at root, we fire
+    // If selector listens at tree, we fire
     if (!self.path.length)
-      return self.emit('update');
+      return update(previousData);
 
     // Checking update log to see whether the cursor should update.
-    root:
-    for (i = 0, l = log.length; i < l; i++) {
-      c = log[i];
-
-      for (j = 0, m = c.length; j < m; j++) {
-        p = c[j];
-
-        // If path is not relevant to us, we break
-        if (p !== '' + self.solvedPath[j])
-          break;
-
-        // If we reached last item and we are relevant, we fire
-        if (j + 1 === m || j + 1 === self.solvedPath.length) {
-          shouldFire = true;
-          break root;
-        }
-      }
-    }
+    if (self.solvedPath)
+      shouldFire = helpers.solveUpdate(
+        log,
+        [self.solvedPath].concat(self._additionnalPaths)
+      );
 
     // Handling relevancy
-    var data = self.reference() !== undefined;
+    var data = self.get(false) !== undefined;
 
     if (self.relevant) {
       if (data && shouldFire) {
-        self.emit('update');
+        update(previousData);
       }
-      else {
+      else if (!data) {
         self.emit('irrelevant');
         self.relevant = false;
       }
@@ -1697,28 +1040,31 @@ function Cursor(root, path, solvedPath) {
     else {
       if (data && shouldFire) {
         self.emit('relevant');
-        self.emit('update');
+        update(previousData);
         self.relevant = true;
       }
     }
   };
 
-  // Listening
-  this.root.on('update', this.updateHandler);
+  // Lazy binding
+  var bound = false;
 
-  // Making mixin
-  this.mixin = mixins.cursor(this);
+  this._lazyBind = function() {
+    if (bound)
+      return;
+    bound = true;
+
+    self.tree.on('update', self.updateHandler);
+  };
+
+  this.on = helpers.before(this._lazyBind, this.on.bind(this));
+  this.once = helpers.before(this._lazyBind, this.once.bind(this));
+
+  if (this.complex)
+    this._lazyBind();
 }
 
 helpers.inherits(Cursor, EventEmitter);
-
-/**
- * Private prototype
- */
-Cursor.prototype._stack = function(spec) {
-  this.root._stack(helpers.pathObject(this.solvedPath, spec));
-  return this;
-};
 
 /**
  * Predicates
@@ -1728,7 +1074,7 @@ Cursor.prototype.isRoot = function() {
 };
 
 Cursor.prototype.isLeaf = function() {
-  return type.Primitive(this.reference());
+  return type.Primitive(this.get(false));
 };
 
 Cursor.prototype.isBranch = function() {
@@ -1738,18 +1084,22 @@ Cursor.prototype.isBranch = function() {
 /**
  * Traversal
  */
+Cursor.prototype.root = function() {
+  return this.tree.root;
+};
+
 Cursor.prototype.select = function(path) {
   if (arguments.length > 1)
     path = helpers.arrayOf(arguments);
 
   if (!type.Path(path))
     throw Error('baobab.Cursor.select: invalid path.');
-  return this.root.select(this.path.concat(path));
+  return this.tree.select(this.path.concat(path));
 };
 
 Cursor.prototype.up = function() {
   if (this.solvedPath && this.solvedPath.length)
-    return this.root.select(this.path.slice(0, -1));
+    return this.tree.select(this.path.slice(0, -1));
   else
     return null;
 };
@@ -1761,7 +1111,7 @@ Cursor.prototype.left = function() {
     throw Error('baobab.Cursor.left: cannot go left on a non-list type.');
 
   return last ?
-    this.root.select(this.solvedPath.slice(0, -1).concat(last - 1)) :
+    this.tree.select(this.solvedPath.slice(0, -1).concat(last - 1)) :
     null;
 };
 
@@ -1771,7 +1121,7 @@ Cursor.prototype.leftmost = function() {
   if (isNaN(last))
     throw Error('baobab.Cursor.leftmost: cannot go left on a non-list type.');
 
-  return this.root.select(this.solvedPath.slice(0, -1).concat(0));
+  return this.tree.select(this.solvedPath.slice(0, -1).concat(0));
 };
 
 Cursor.prototype.right = function() {
@@ -1780,10 +1130,10 @@ Cursor.prototype.right = function() {
   if (isNaN(last))
     throw Error('baobab.Cursor.right: cannot go right on a non-list type.');
 
-  if (last + 1 === this.up().reference().length)
+  if (last + 1 === this.up().get(false).length)
     return null;
 
-  return this.root.select(this.solvedPath.slice(0, -1).concat(last + 1));
+  return this.tree.select(this.solvedPath.slice(0, -1).concat(last + 1));
 };
 
 Cursor.prototype.rightmost = function() {
@@ -1792,148 +1142,240 @@ Cursor.prototype.rightmost = function() {
   if (isNaN(last))
     throw Error('baobab.Cursor.right: cannot go right on a non-list type.');
 
-  var list = this.up().reference();
+  var list = this.up().get(false);
 
-  return this.root.select(this.solvedPath.slice(0, -1).concat(list.length - 1));
+  return this.tree.select(this.solvedPath.slice(0, -1).concat(list.length - 1));
 };
 
 Cursor.prototype.down = function() {
   var last = +this.solvedPath[this.solvedPath.length - 1];
 
-  if (!(this.reference() instanceof Array))
+  if (!(this.get(false) instanceof Array))
     return null;
 
-  return this.root.select(this.solvedPath.concat(0));
+  return this.tree.select(this.solvedPath.concat(0));
+};
+
+Cursor.prototype.map = function(fn, scope) {
+  var array = this.get(false),
+      l = arguments.length;
+
+  if (!type.Array(array))
+    throw Error('baobab.Cursor.map: cannot map a non-list type.');
+
+  return array.map(function(item, i) {
+    return fn.call(
+      l > 1 ? scope : this,
+      this.select(i),
+      i
+    );
+  }, this);
 };
 
 /**
  * Access
  */
 Cursor.prototype.get = function(path) {
+
+  if (!this.solvedPath)
+    return;
+
+  var skipEvent = false;
+
+  if (path === false) {
+    path = [];
+    skipEvent = true;
+  }
+
   if (arguments.length > 1)
     path = helpers.arrayOf(arguments);
 
-  if (type.Step(path))
-    return this.root.get(this.solvedPath.concat(path));
-  else
-    return this.root.get(this.solvedPath);
-};
+  var fullPath = this.solvedPath.concat(
+    [].concat(path || path === 0 ? path : [])
+  );
 
-Cursor.prototype.reference = function(path) {
-  if (arguments.length > 1)
-    path = helpers.arrayOf(arguments);
+  // Retrieving data
+  var data = helpers.getIn(this.tree.data, fullPath, this.tree);
 
-  if (type.Step(path))
-    return this.root.reference(this.solvedPath.concat(path));
-  else
-    return this.root.reference(this.solvedPath);
-};
+  // Emitting an event
+  if (!skipEvent)
+    this.tree.emit('get', {path: fullPath, data: data});
 
-Cursor.prototype.clone = function(path) {
-  if (arguments.length > 1)
-    path = helpers.arrayOf(arguments);
-
-  if (type.Step(path))
-    return this.root.clone(this.solvedPath.concat(path));
-  else
-    return this.root.clone(this.solvedPath);
+  return data;
 };
 
 /**
  * Update
  */
-Cursor.prototype.set = function(key, value) {
-  if (arguments.length < 2)
-    throw Error('baobab.Cursor.set: expecting at least key/value.');
+function pathPolymorphism(method, allowedType, key, val) {
+  if (arguments.length > 5)
+    throw Error('baobab.Cursor.' + method + ': too many arguments.');
 
-  var spec = {};
-  spec[key] = {$set: value};
-  return this.update(spec);
+  if (method === 'unset') {
+    val = true;
+
+    if (arguments.length === 2)
+      key = [];
+  }
+
+  else if (arguments.length < 4) {
+    val = key;
+    key = [];
+  }
+
+  if (!type.Path(key))
+    throw Error('baobab.Cursor.' + method + ': invalid path "' + key + '".');
+
+  // Splice exception
+  if (method === 'splice' &&
+      !type.Splicer(val)) {
+    if (type.Array(val))
+      val = [val];
+    else
+      throw Error('baobab.Cursor.splice: incorrect value.');
+  }
+
+  // Checking value validity
+  if (allowedType && !allowedType(val))
+    throw Error('baobab.Cursor.' + method + ': incorrect value.');
+
+  var path = [].concat(key),
+      solvedPath = helpers.solvePath(this.get(false), path, this.tree);
+
+  if (!solvedPath)
+    throw Error('baobab.Cursor.' + method + ': could not solve dynamic path.');
+
+  var leaf = {};
+  leaf['$' + method] = val;
+
+  var spec = helpers.pathObject(solvedPath, leaf);
+
+  return spec;
+}
+
+function makeUpdateMethod(command, type) {
+  Cursor.prototype[command] = function() {
+    var spec = pathPolymorphism.bind(this, command, type).apply(this, arguments);
+
+    return this.update(spec, true);
+  };
+}
+
+makeUpdateMethod('set');
+makeUpdateMethod('apply', type.Function);
+makeUpdateMethod('chain', type.Function);
+makeUpdateMethod('push');
+makeUpdateMethod('unshift');
+makeUpdateMethod('merge', type.Object);
+makeUpdateMethod('splice');
+
+Cursor.prototype.unset = function(key) {
+  if (key === undefined && this.isRoot())
+    throw Error('baobab.Cursor.unset: cannot remove root node.');
+
+  var spec = pathPolymorphism.bind(this, 'unset', null).apply(this, arguments);
+
+  return this.update(spec, true);
 };
 
-Cursor.prototype.edit = function(value) {
-  return this.update({$set: value});
-};
+Cursor.prototype.update = function(spec, skipMerge) {
+  if (!type.Object(spec))
+    throw Error('baobab.Cursor.update: invalid specifications.');
 
-Cursor.prototype.apply = function(fn) {
-  if (typeof fn !== 'function')
-    throw Error('baobab.Cursor.apply: argument is not a function.');
+  if (!this.solvedPath)
+    throw Error('baobab.Cursor.update: could not solve the cursor\'s dynamic path.');
 
-  return this.update({$apply: fn});
-};
-
-// TODO: maybe composing should be done here rather than in the merge
-Cursor.prototype.thread = function(fn) {
-  if (typeof fn !== 'function')
-    throw Error('baobab.Cursor.thread: argument is not a function.');
-
-  return this.update({$thread: fn});
-};
-
-// TODO: consider dropping the ahead testing
-Cursor.prototype.push = function(value) {
-  if (!(this.reference() instanceof Array))
-    throw Error('baobab.Cursor.push: trying to push to non-array value.');
-
-  if (arguments.length > 1)
-    return this.update({$push: helpers.arrayOf(arguments)});
-  else
-    return this.update({$push: value});
-};
-
-Cursor.prototype.unshift = function(value) {
-  if (!(this.reference() instanceof Array))
-    throw Error('baobab.Cursor.push: trying to push to non-array value.');
-
-  if (arguments.length > 1)
-    return this.update({$unshift: helpers.arrayOf(arguments)});
-  else
-    return this.update({$unshift: value});
-};
-
-Cursor.prototype.merge = function(o) {
-  if (!type.Object(o))
-    throw Error('baobab.Cursor.merge: trying to merge a non-object.');
-
-  if (!type.Object(this.reference()))
-    throw Error('baobab.Cursor.merge: trying to merge into a non-object.');
-
-  this.update({$merge: o});
-};
-
-Cursor.prototype.update = function(spec) {
-  return this._stack(spec);
+  this.tree.stack(helpers.pathObject(this.solvedPath, spec), skipMerge);
+  return this;
 };
 
 /**
- * Combination
+ * History
  */
-Cursor.prototype.or = function(otherCursor) {
-  return new Combination('or', this, otherCursor);
+Cursor.prototype.startRecording = function(maxRecords) {
+  maxRecords = maxRecords || 5;
+
+  if (maxRecords < 1)
+    throw Error('baobab.Cursor.startRecording: invalid maximum number of records.');
+
+  if (this.archive)
+    return this;
+
+  // Lazy bind
+  this._lazyBind();
+
+  this.archive = helpers.archive(maxRecords);
+  this.recording = true;
+  return this;
 };
 
-Cursor.prototype.and = function(otherCursor) {
-  return new Combination('and', this, otherCursor);
+Cursor.prototype.stopRecording = function() {
+  this.recording = false;
+  return this;
+};
+
+Cursor.prototype.undo = function(steps) {
+  steps = steps || 1;
+
+  if (!this.recording)
+    throw Error('baobab.Cursor.undo: cursor is not recording.');
+
+  if (!type.PositiveInteger(steps))
+    throw Error('baobab.Cursor.undo: expecting a positive integer.');
+
+  var record = this.archive.back(steps);
+
+  if (!record)
+    throw Error('baobab.Cursor.undo: cannot find a relevant record (' + steps + ' back).');
+
+  this.undoing = true;
+  return this.set(record);
+};
+
+Cursor.prototype.hasHistory = function() {
+  return !!(this.archive && this.archive.get().length);
+};
+
+Cursor.prototype.getHistory = function() {
+  return this.archive ? this.archive.get() : [];
+};
+
+Cursor.prototype.clearHistory = function() {
+  this.archive = null;
+  return this;
 };
 
 /**
  * Releasing
  */
 Cursor.prototype.release = function() {
-  this.root.off('update', this.updateHandler);
-  this.root = null;
-  this.unbindAll();
+
+  // Removing listener on parent
+  this.tree.off('update', this.updateHandler);
+
+  // If the cursor is hashed, we unsubscribe from the parent
+  if (this.hash)
+    delete this.tree._cursors[this.hash];
+
+  // Dereferencing
+  delete this.tree;
+  delete this.path;
+  delete this.solvedPath;
+  delete this.archive;
+
+  // Killing emitter
+  this.kill();
 };
 
 /**
  * Output
  */
 Cursor.prototype.toJSON = function() {
-  return this.reference();
+  return this.get();
 };
 
-type.Cursor = function (value) {
-  return value instanceof Cursor;
+Cursor.prototype.toString = function() {
+  return this._identity;
 };
 
 /**
@@ -1941,7 +1383,189 @@ type.Cursor = function (value) {
  */
 module.exports = Cursor;
 
-},{"./combination.js":7,"./helpers.js":9,"./mixins.js":11,"./type.js":12,"emmett":4}],9:[function(require,module,exports){
+},{"../defaults.js":2,"./helpers.js":8,"./type.js":10,"emmett":4}],7:[function(require,module,exports){
+/**
+ * Baobab Facet Abstraction
+ * =========================
+ *
+ * Facets enable the user to define views on a given Baobab tree.
+ */
+var EventEmitter = require('emmett'),
+    Cursor = require('./cursor.js'),
+    helpers = require('./helpers.js'),
+    type = require('./type.js');
+
+function Facet(tree, definition, args) {
+  var self = this;
+
+  var firstTime = true,
+      solved = false,
+      getter = definition.get,
+      facetData = null;
+
+  // Extending event emitter
+  EventEmitter.call(this);
+
+  // Properties
+  this.killed = false;
+  this.tree = tree;
+  this.cursors = {};
+  this.facets = {};
+
+  var cursorsMapping = definition.cursors,
+      facetsMapping = definition.facets,
+      complexCursors = typeof definition.cursors === 'function',
+      complexFacets = typeof definition.facets === 'function';
+
+  // Refreshing the internal mapping
+  function refresh(complexity, targetMapping, targetProperty, mappingType, refreshArgs) {
+    if (!complexity && !firstTime)
+      return;
+
+    solved = false;
+
+    var solvedMapping = targetMapping;
+
+    if (complexity)
+      solvedMapping = targetMapping.apply(this, refreshArgs);
+
+    if (!mappingType(solvedMapping))
+      throw Error('baobab.Facet: incorrect ' + targetProperty + ' mapping.');
+
+    self[targetProperty] = {};
+
+    Object.keys(solvedMapping).forEach(function(k) {
+
+      if (targetProperty === 'cursors') {
+        if (solvedMapping[k] instanceof Cursor) {
+          self.cursors[k] = solvedMapping[k];
+          return;
+        }
+
+        if (type.Path(solvedMapping[k])) {
+          self.cursors[k] = tree.select(solvedMapping[k]);
+          return;
+        }
+      }
+
+      else {
+        if (solvedMapping[k] instanceof Facet) {
+          self.facets[k] = solvedMapping[k];
+          return;
+        }
+
+        if (typeof solvedMapping[k] === 'string') {
+          self.facets[k] = tree.facets[solvedMapping[k]];
+
+          if (!self.facets[k])
+            throw Error('baobab.Facet: unkown "' + solvedMapping[k] + '" facet in facets mapping.');
+          return;
+        }
+      }
+    });
+  }
+
+  this.refresh = function(refreshArgs) {
+    refreshArgs = refreshArgs || [];
+
+    if (!type.Array(refreshArgs))
+      throw Error('baobab.Facet.refresh: first argument should be an array.');
+
+    if (cursorsMapping)
+      refresh(
+        complexCursors,
+        cursorsMapping,
+        'cursors',
+        type.FacetCursors,
+        refreshArgs
+      );
+
+    if (facetsMapping)
+      refresh(
+        complexFacets,
+        facetsMapping,
+        'facets',
+        type.FacetFacets,
+        refreshArgs
+      );
+  };
+
+  // Data solving
+  this.get = function() {
+    if (solved)
+      return facetData;
+
+    // Solving
+    var data = {},
+        k;
+
+    for (k in self.facets)
+      data[k] = self.facets[k].get();
+
+    for (k in self.cursors)
+      data[k] = self.cursors[k].get();
+
+    // Applying getter
+    data = typeof getter === 'function' ?
+      getter.call(self, data) :
+      data;
+
+    solved = true;
+    facetData = data;
+
+    return facetData;
+  };
+
+  // Tracking the tree's updates
+  function cursorsPaths(cursors) {
+    return Object.keys(cursors).map(function(k) {
+      return cursors[k].solvedPath;
+    });
+  }
+
+  function facetsPaths(facets) {
+    var paths =  Object.keys(facets).map(function(k) {
+      return cursorsPaths(facets[k].cursors).concat(facetsPaths(facets[k].facets));
+    });
+
+    return [].concat.apply([], paths);
+  }
+
+  this.updateHandler = function(e) {
+    if (self.killed)
+      return;
+
+    var paths = cursorsPaths(self.cursors).concat(facetsPaths(self.facets));
+
+    if (helpers.solveUpdate(e.data.log, paths)) {
+      solved = false;
+      self.emit('update');
+    }
+  };
+
+  // Init routine
+  this.refresh(args);
+  this.tree.on('update', this.updateHandler);
+
+  firstTime = false;
+}
+
+helpers.inherits(Facet, EventEmitter);
+
+Facet.prototype.release = function() {
+  this.tree.off('update', this.updateHandler);
+
+  this.tree = null;
+  this.cursors = null;
+  this.facets = null;
+  this.killed = true;
+  this.kill();
+};
+
+module.exports = Facet;
+
+},{"./cursor.js":6,"./helpers.js":8,"./type.js":10,"emmett":4}],8:[function(require,module,exports){
+(function (global){
 /**
  * Baobab Helpers
  * ===============
@@ -1955,6 +1579,24 @@ function arrayOf(o) {
   return Array.prototype.slice.call(o);
 }
 
+// Decorate a function by applying something before it
+function before(decorator, fn) {
+  return function() {
+    decorator.apply(null, arguments);
+    fn.apply(null, arguments);
+  };
+}
+
+// Non-mutative splice function
+function splice(array, index, nb /*, &elements */) {
+  var elements = arrayOf(arguments).slice(3);
+
+  return array
+    .slice(0, index)
+    .concat(elements)
+    .concat(array.slice(index + nb));
+}
+
 // Shallow merge
 function shallowMerge(o1, o2) {
   var o = {},
@@ -1966,57 +1608,109 @@ function shallowMerge(o1, o2) {
   return o;
 }
 
-// Shallow clone
-function shallowClone(item) {
-  if (!item || !(item instanceof Object))
-    return item;
+// Clone a regexp
+function cloneRegexp(re) {
+  var pattern = re.source,
+      flags = '';
 
-  // Array
-  if (type.Array(item))
-    return item.slice(0);
+  if (re.global) flags += 'g';
+  if (re.multiline) flags += 'm';
+  if (re.ignoreCase) flags += 'i';
+  if (re.sticky) flags += 'y';
+  if (re.unicode) flags += 'u';
 
-  // Date
-  if (type.Date(item))
-    return new Date(item.getTime());
-
-  // Object
-  if (type.Object(item)) {
-    var k, o = {};
-    for (k in item)
-      o[k] = item[k];
-    return o;
-  }
-
-  return item;
+  return new RegExp(pattern, flags);
 }
 
-// Deep clone
-function deepClone(item) {
-  if (!item || !(item instanceof Object))
+// Cloning function
+function cloner(deep, item) {
+  if (!item ||
+      typeof item !== 'object' ||
+      item instanceof Error ||
+      ('ArrayBuffer' in global && item instanceof ArrayBuffer))
     return item;
 
   // Array
   if (type.Array(item)) {
-    var i, l, a = [];
-    for (i = 0, l = item.length; i < l; i++)
-      a.push(deepClone(item[i]));
-    return a;
+    if (deep) {
+      var i, l, a = [];
+      for (i = 0, l = item.length; i < l; i++)
+        a.push(deepClone(item[i]));
+      return a;
+    }
+    else {
+      return item.slice(0);
+    }
   }
 
   // Date
   if (type.Date(item))
     return new Date(item.getTime());
 
+  // RegExp
+  if (item instanceof RegExp)
+    return cloneRegexp(item);
+
   // Object
   if (type.Object(item)) {
     var k, o = {};
+
+    if (item.constructor && item.constructor !== Object)
+      o = Object.create(item.constructor.prototype);
+
     for (k in item)
-      o[k] = deepClone(item[k]);
+      if (item.hasOwnProperty(k))
+        o[k] = deep ? deepClone(item[k]) : item[k];
     return o;
   }
 
   return item;
 }
+
+// Shallow & deep cloning functions
+var shallowClone = cloner.bind(null, false),
+    deepClone = cloner.bind(null, true);
+
+// Freezing function
+function freezer(deep, o) {
+  if (typeof o !== 'object')
+    return;
+
+  Object.freeze(o);
+
+  if (!deep)
+    return;
+
+  if (Array.isArray(o)) {
+
+    // Iterating through the elements
+    var i,
+        l;
+
+    for (i = 0, l = o.length; i < l; i++)
+      deepFreeze(o[i]);
+  }
+  else {
+    var p,
+        k;
+
+    for (k in o) {
+      p = o[k];
+
+      if (!p ||
+          !o.hasOwnProperty(k) ||
+          typeof p !== 'object' ||
+          Object.isFrozen(p))
+        continue;
+
+      deepFreeze(p);
+    }
+  }
+}
+
+// Shallow & deep freezing function
+var freeze = Object.freeze ? freezer.bind(null, false) : Function.prototype,
+    deepFreeze = Object.freeze ? freezer.bind(null, true) : Function.prototype;
 
 // Simplistic composition
 function compose(fn1, fn2) {
@@ -2049,9 +1743,15 @@ function compare(object, spec) {
   var ok = true,
       k;
 
+  // If we reached here via a recursive call, object may be undefined because
+  // not all items in a collection will have the same deep nesting structure
+  if (!object) {
+    return false;
+  }
+
   for (k in spec) {
     if (type.Object(spec[k])) {
-      ok = ok && compare(object[k]);
+      ok = ok && compare(object[k], spec[k]);
     }
     else if (type.Array(spec[k])) {
       ok = ok && !!~spec[k].indexOf(object[k]);
@@ -2078,10 +1778,11 @@ function indexByComparison(object, spec) {
 }
 
 // Retrieve nested objects
-function getIn(object, path) {
+function getIn(object, path, tree) {
   path = path || [];
 
   var c = object,
+      p,
       i,
       l;
 
@@ -2096,10 +1797,21 @@ function getIn(object, path) {
       c = first(c, path[i]);
     }
     else if (typeof path[i] === 'object') {
-      if (!type.Array(c))
-        return;
+      if (tree && '$cursor' in path[i]) {
+        if (!type.Path(path[i].$cursor))
+          throw Error('baobab.getIn: $cursor path must be an array.');
 
-      c = firstByComparison(c, path[i]);
+        p = tree.get(path[i].$cursor);
+        c = c[p];
+      }
+
+      else if (!type.Array(c)) {
+        return;
+      }
+
+      else {
+        c = firstByComparison(c, path[i]);
+      }
     }
     else {
       c = c[path[i]];
@@ -2110,7 +1822,7 @@ function getIn(object, path) {
 }
 
 // Solve a complex path
-function solvePath(object, path) {
+function solvePath(object, path, tree) {
   var solvedPath = [],
       c = object,
       idx,
@@ -2130,20 +1842,72 @@ function solvePath(object, path) {
       c = c[idx];
     }
     else if (typeof path[i] === 'object') {
-      if (!type.Array(c))
-        return;
+      if (tree && '$cursor' in path[i]) {
+        if (!type.Path(path[i].$cursor))
+          throw Error('baobab.getIn: $cursor path must be an array.');
 
-      idx = indexByComparison(c, path[i]);
-      solvedPath.push(idx);
-      c = c[idx];
+        p = tree.get(path[i].$cursor);
+        solvedPath.push(p);
+        c = c[p];
+      }
+
+      else if (!type.Array(c)) {
+        return;
+      }
+
+      else {
+        idx = indexByComparison(c, path[i]);
+        solvedPath.push(idx);
+        c = c[idx];
+      }
     }
     else {
       solvedPath.push(path[i]);
-      c = c[path[i]];
+      c = c[path[i]] || {};
     }
   }
 
   return solvedPath;
+}
+
+// Determine whether an update should fire for the given paths
+// NOTES: 1) if performance becomes an issue, the threefold loop can be
+//           simplified to become a complex twofold one.
+//        2) a regex version could also work but I am not confident it would be
+//           faster.
+function solveUpdate(log, paths) {
+  var i, j, k, l, m, n, p, c, s;
+
+  // Looping through possible paths
+  for (i = 0, l = paths.length; i < l; i++) {
+    p = paths[i];
+
+    if (!p.length)
+      return true;
+
+    // Looping through logged paths
+    for (j = 0, m = log.length; j < m; j++) {
+      c = log[j];
+
+      if (!c.length)
+        return true;
+
+      // Looping through steps
+      for (k = 0, n = c.length; k < n; k++) {
+        s = c[k];
+
+        // If path is not relevant, we break
+        if (s != p[k])
+          break;
+
+        // If we reached last item and we are relevant
+        if (k + 1 === n || k + 1 === p.length)
+          return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // Return a fake object relative to the given path
@@ -2164,6 +1928,7 @@ function pathObject(path, spec) {
   return o;
 }
 
+// Shim used for cross-compatible event emitting extension
 function inherits(ctor, superCtor) {
   ctor.super_ = superCtor;
   var TempCtor = function () {};
@@ -2172,19 +1937,50 @@ function inherits(ctor, superCtor) {
   ctor.prototype.constructor = ctor;
 }
 
+// Archive
+function archive(size) {
+  var records = [];
+
+  return {
+    add: function(record) {
+      records.unshift(record);
+
+      if (records.length > size)
+        records.length = size;
+    },
+    back: function(steps) {
+      var record = records[steps - 1];
+
+      if (record)
+        records = records.slice(steps);
+      return record;
+    },
+    get: function() {
+      return records;
+    }
+  };
+}
+
 module.exports = {
+  archive: archive,
   arrayOf: arrayOf,
+  before: before,
+  freeze: freeze,
   deepClone: deepClone,
+  deepFreeze: deepFreeze,
   shallowClone: shallowClone,
   shallowMerge: shallowMerge,
   compose: compose,
   getIn: getIn,
   inherits: inherits,
   pathObject: pathObject,
-  solvePath: solvePath
+  solvePath: solvePath,
+  solveUpdate: solveUpdate,
+  splice: splice
 };
 
-},{"./type.js":12}],10:[function(require,module,exports){
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./type.js":10}],9:[function(require,module,exports){
 /**
  * Baobab Merge
  * =============
@@ -2195,351 +1991,195 @@ var helpers = require('./helpers.js'),
     type = require('./type.js');
 
 // Helpers
-function hasKey(o, key) {
-  return key in (o || {});
-}
+var COMMANDS = ['$unset', '$set', '$apply'];
 
-function conflict(a, b, key) {
-  return hasKey(a, key) && hasKey(b, key);
+function only(command, commandValue) {
+  var o = {};
+  o[command] = commandValue;
+  return o;
 }
 
 // Main function
-function merge() {
-  var res = {},
-      current,
-      next,
-      l = arguments.length,
-      i,
-      k;
+function merge(a, b) {
+  var o = helpers.shallowClone(a || {}),
+      leafLevel = false,
+      k,
+      i;
 
-  for (i = l - 1; i >= 0; i--) {
-
-    // Upper $set/$apply... and conflicts
-    // When solving conflicts, here is the priority to apply:
-    // -- 1) $set
-    // -- 2) $merge
-    // -- 3) $apply
-    // -- 4) $chain
-    if (arguments[i].$set) {
-      delete res.$apply;
-      delete res.$merge;
-      res.$set = arguments[i].$set;
-      continue;
+  COMMANDS.forEach(function(c) {
+    if (c in b) {
+      o = only(c, b[c]);
+      leafLevel = true;
     }
-    else if (arguments[i].$merge) {
-      delete res.$set;
-      delete res.$apply;
-      res.$merge = arguments[i].$merge;
-      continue;
-    }
-    else if (arguments[i].$apply){
-      delete res.$set;
-      delete res.$merge;
-      res.$apply = arguments[i].$apply;
-      continue;
-    }
-    else if (arguments[i].$chain) {
-      delete res.$set;
-      delete res.$merge;
+  });
 
-      if (res.$apply)
-        res.$apply = helpers.compose(res.$apply, arguments[i].$chain);
-      else
-        res.$apply = arguments[i].$chain;
-      continue;
-    }
+  if (b.$chain) {
 
-    for (k in arguments[i]) {
-      current = res[k];
-      next = arguments[i][k];
+    if (o.$apply)
+      o.$apply = helpers.compose(o.$apply, b.$chain);
+    else
+      o.$apply = b.$chain;
 
-      if (current && type.Object(next)) {
-
-        // $push conflict
-        if (conflict(current, next, '$push')) {
-          if (type.Array(current.$push))
-            current.$push = current.$push.concat(next.$push);
-          else
-            current.$push = [current.$push].concat(next.$push);
-        }
-
-        // $unshift conflict
-        else if (conflict(current, next, '$unshift')) {
-          if (type.Array(next.$unshift))
-            current.$unshift = next.$unshift.concat(current.$unshift);
-          else
-            current.$unshift = [next.$unshift].concat(current.$unshift);
-        }
-
-        // No conflict
-        else {
-          res[k] = merge(next, current);
-        }
-      }
-      else {
-        res[k] = next;
-      }
-    }
+    o = only('$apply', o.$apply);
+    leafLevel = true;
   }
 
-  return res;
+  if (b.$merge) {
+    o.$merge = helpers.shallowMerge(o.$merge || {}, b.$merge);
+    leafLevel = true;
+  }
+
+  if (b.$splice || b.$splice) {
+    o.$splice = [].concat(o.$splice || []).concat(b.$splice || []);
+    leafLevel = true;
+  }
+
+  if (b.$push || o.$push) {
+    o.$push = [].concat(o.$push || []).concat(b.$push || []);
+    leafLevel = true;
+  }
+
+  if (b.$unshift || o.$unshift) {
+    o.$unshift = [].concat(b.$unshift || []).concat(o.$unshift || []);
+    leafLevel = true;
+  }
+
+  if (leafLevel)
+    return o;
+
+  for (k in o) {
+    if (k.charAt(0) === '$')
+      delete o[k];
+  }
+
+  for (k in b) {
+    if (type.Object(b[k]))
+      o[k] = merge(o[k], b[k]);
+  }
+
+  return o;
 }
 
 module.exports = merge;
 
-},{"./helpers.js":9,"./type.js":12}],11:[function(require,module,exports){
-/**
- * Baobab React Mixins
- * ====================
- *
- * Compilation of react mixins designed to deal with cursors integration.
- */
-var Combination = require('./combination.js'),
-    type = require('./type.js');
-
-module.exports = {
-  baobab: function(baobab) {
-    return {
-
-      // Run Baobab mixin first to allow mixins to access cursors
-      mixins: [{
-        getInitialState: function() {
-
-          // Binding baobab to instance
-          this.tree = baobab;
-
-          // Is there any cursors to create?
-          if (!this.cursor && !this.cursors)
-            return {};
-
-          // Is there conflicting definitions?
-          if (this.cursor && this.cursors)
-            throw Error('baobab.mixin: you cannot have both ' +
-                        '`component.cursor` and `component.cursors`. Please ' +
-                        'make up your mind.');
-
-          // Type
-          this.__type = null;
-
-          // Making update handler
-          this.__updateHandler = (function() {
-            this.setState(this.__getCursorData());
-          }).bind(this);
-
-          if (this.cursor) {
-            if (!type.MixinCursor(this.cursor))
-              throw Error('baobab.mixin.cursor: invalid data (cursor, string or array).');
-
-            if (!type.Cursor(this.cursor))
-              this.cursor = baobab.select(this.cursor);
-
-            this.__getCursorData = (function() {
-              return {cursor: this.cursor.get()};
-            }).bind(this);
-            this.__type = 'single';
-          }
-          else if (this.cursors) {
-            if (['object', 'array'].indexOf(type(this.cursors)) === -1)
-              throw Error('baobab.mixin.cursor: invalid data (object or array).');
-
-            if (type.Array(this.cursors)) {
-              this.cursors = this.cursors.map(function(path) {
-                return type.Cursor(path) ? path : baobab.select(path);
-              });
-
-              this.__getCursorData = (function() {
-                return {cursors: this.cursors.map(function(cursor) {
-                  return cursor.get();
-                })};
-              }).bind(this);
-              this.__type = 'array';
-            }
-            else {
-              for (var k in this.cursors) {
-                if (!type.Cursor(this.cursors[k]))
-                  this.cursors[k] = baobab.select(this.cursors[k]);
-              }
-
-              this.__getCursorData = (function() {
-                var d = {};
-                for (k in this.cursors)
-                  d[k] = this.cursors[k].get();
-                return {cursors: d};
-              }).bind(this);
-              this.__type = 'object';
-            }
-          }
-
-          return this.__getCursorData();
-        },
-        componentDidMount: function() {
-          if (this.__type === 'single') {
-            this.__combination = new Combination('or', [this.cursor]);
-            this.__combination.on('update', this.__updateHandler);
-          }
-          else if (this.__type === 'array') {
-            this.__combination = new Combination('or', this.cursors);
-            this.__combination.on('update', this.__updateHandler);
-          }
-          else if (this.__type === 'object') {
-            this.__combination = new Combination(
-              'or',
-              Object.keys(this.cursors).map(function(k) {
-                return this.cursors[k];
-              }, this)
-            );
-            this.__combination.on('update', this.__updateHandler);
-          }
-        },
-        componentWillUnmount: function() {
-          if (this.__combination)
-            this.__combination.release();
-        }
-      }].concat(baobab.options.mixins)
-    };
-  },
-  cursor: function(cursor) {
-    return {
-
-      // Run cursor mixin first to allow mixins to access cursors
-      mixins: [{
-        getInitialState: function() {
-
-          // Binding cursor to instance
-          this.cursor = cursor;
-
-          // Making update handler
-          this.__updateHandler = (function() {
-            this.setState({cursor: this.cursor.get()});
-          }).bind(this);
-
-          return {cursor: this.cursor.get()};
-        },
-        componentDidMount: function() {
-
-          // Listening to updates
-          this.cursor.on('update', this.__updateHandler);
-        },
-        componentWillUnmount: function() {
-
-          // Unbinding handler
-          this.cursor.off('update', this.__updateHandler);
-        }
-      }].concat(cursor.root.options.mixins)
-    };
-  }
-};
-
-},{"./combination.js":7,"./type.js":12}],12:[function(require,module,exports){
+},{"./helpers.js":8,"./type.js":10}],10:[function(require,module,exports){
 /**
  * Baobab Type Checking
  * =====================
  *
  * Misc helpers functions used throughout the library to perform some type
  * tests at runtime.
+ *
+ * @christianalfoni
  */
+var type = {};
 
-// Not reusing methods as it will just be an extra
-// call on the stack
-var type = function (value) {
-  if (Array.isArray(value)) {
-    return 'array';
-  } else if (typeof value === 'object' && value !== null) {
-    return 'object';
-  } else if (typeof value === 'string') {
-    return 'string';
-  } else if (typeof value === 'number') {
-    return 'number';
-  } else if (typeof value === 'boolean') {
-    return 'boolean';
-  } else if (typeof value === 'function') {
-    return 'function';
-  } else if (value === null) {
-    return 'null';
-  } else if (value === undefined) {
-    return 'undefined';
-  } else if (value instanceof Date) {
-    return 'date';
-  } else {
-    return 'invalid';
-  }
-};
+/**
+ * Helpers
+ */
+function anyOf(value, allowed) {
+  return allowed.some(function(t) {
+    return type[t](value);
+  });
+}
 
-type.Array = function (value) {
+/**
+ * Simple types
+ */
+type.Array = function(value) {
   return Array.isArray(value);
 };
 
-type.Object = function (value) {
-  return !Array.isArray(value) && typeof value === 'object' && value !== null;
+type.Object = function(value) {
+  return value &&
+         typeof value === 'object' &&
+         !Array.isArray(value) &&
+         !(value instanceof Date) &&
+         !(value instanceof RegExp);
 };
 
-type.String = function (value) {
+type.String = function(value) {
   return typeof value === 'string';
 };
 
-type.Number = function (value) {
+type.Number = function(value) {
   return typeof value === 'number';
 };
 
-type.Boolean = function (value) {
-  return typeof value === 'boolean';
+type.PositiveInteger = function(value) {
+  return typeof value === 'number' && value > 0 && value % 1 === 0;
 };
 
-type.Function = function (value) {
+type.Function = function(value) {
   return typeof value === 'function';
 };
 
-type.Primitive = function (value) {
-  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+type.Primitive = function(value) {
+  return value !== Object(value);
 };
 
-type.Date = function (value) {
+type.Date = function(value) {
   return value instanceof Date;
 };
 
-type.Step = function (value) {
-  var valueType = type(value);
-  var notValid = ['null', 'undefined', 'invalid', 'date'];
-  return notValid.indexOf(valueType) === -1;
+/**
+ * Complex types
+ */
+type.NonScalar = function(value) {
+  return type.Object(value) || type.Array(value);
 };
 
-// Should undefined be allowed?
-type.Path = function (value) {
-  var types = ['object', 'string', 'number', 'function', 'undefined'];
+type.Splicer = function(value) {
+  return type.Array(value) &&
+         value.every(type.Array);
+};
+
+type.Path = function(value, allowed) {
+  allowed = allowed || ['String', 'Number', 'Function', 'Object'];
+
   if (type.Array(value)) {
-    for (var x = 0; x < value.length; x++) {
-      if (types.indexOf(type(value[x])) === -1) {
-        return false;
-      }
-    }
-  } else {
-    return types.indexOf(type(value)) >= 0;
+    return value.every(function(step) {
+      return anyOf(step, allowed);
+    });
   }
-  return true;
-
+  else {
+    return anyOf(value, allowed);
+  }
 };
 
-// string|number|array|cursor
-type.MixinCursor = function (value) {
-  var allowedValues = ['string', 'number', 'array'];
-  return allowedValues.indexOf(type(value)) >= 0 || type.Cursor(value);
+type.ComplexPath = function(value) {
+  return value.some(function(step) {
+    return anyOf(step, ['Object', 'Function']);
+  });
 };
 
-// Already know this is an array
-type.ComplexPath = function (value) {
-  var complexTypes = ['object', 'function'];
-  var hasComplexTypes = false;
-  for (var x = 0; x < value.length; x++) {
-    if (complexTypes.indexOf(type(value[x])) >= 0) {
-      hasComplexTypes = true;
-    }
-  }
-  return hasComplexTypes;
+type.FacetCursors = function(value) {
+  if (!type.Object(value))
+    return false;
+
+  return Object.keys(value).every(function(k) {
+    var v = value[k];
+
+    return type.Path(v, ['String', 'Number', 'Object']) ||
+           v instanceof require('./cursor.js');
+  });
+};
+
+type.FacetFacets = function(value) {
+  if (!type.Object(value))
+    return false;
+
+  return Object.keys(value).every(function(k) {
+    var v = value[k];
+
+    return typeof v === 'string' ||
+           v instanceof require('./facet.js');
+  });
 };
 
 module.exports = type;
 
-},{}],13:[function(require,module,exports){
+},{"./cursor.js":6,"./facet.js":7}],11:[function(require,module,exports){
 /**
  * Baobab Update
  * ==============
@@ -2550,216 +2190,164 @@ module.exports = type;
 var helpers = require('./helpers.js'),
     type = require('./type.js');
 
-var COMMANDS = {};
-[
-  '$set',
-  '$push',
-  '$unshift',
-  '$apply',
-  '$merge'
-].forEach(function(c) {
-  COMMANDS[c] = true;
-});
-
 // Helpers
 function makeError(path, message) {
-  var e = new Error('precursors.update: ' + message + ' at path /' +
-                    path.toString());
+  var e = new Error('baobab.update: ' + message + ' at path /' +
+                    path.slice(1).join('/'));
 
   e.path = path;
   return e;
 }
 
-// Core function
-function update(target, spec, opts) {
-  opts = opts || {};
+module.exports = function(data, spec, opts) {
+  opts = opts || {};
+
   var log = {};
 
-  // Closure mutating the internal object
-  (function mutator(o, spec, path) {
-    path = path || [];
+  // Shifting root
+  data = {root: helpers.shallowClone(data)};
 
-    var hash = path.join('λ'),
+  // Closure performing the updates themselves
+  var mutator = function(o, spec, path, parent) {
+    path = path || ['root'];
+
+    var hash = path.join('|λ|'),
+        lastKey = path[path.length - 1],
+        oldValue = o[lastKey],
         fn,
-        h,
         k,
-        v;
+        v,
+        i,
+        l;
 
-    for (k in spec) {
-      if (COMMANDS[k]) {
-        v = spec[k];
+    // Are we at leaf level?
+    var leafLevel = Object.keys(spec).some(function(k) {
+      return k.charAt(0) === '$';
+    });
 
-        // Logging update
-        log[hash] = true;
+    // Leaf level updates
+    if (leafLevel) {
+      log[hash] = true;
 
-        // Applying
-        switch (k) {
-          case '$push':
-            if (!type.Array(o))
-              throw makeError(path, 'using command $push to a non array');
+      for (k in spec) {
 
-            if (!type.Array(v))
-              o.push(v);
-            else
-              o.push.apply(o, v);
-            break;
-          case '$unshift':
-            if (!type.Array(o))
-              throw makeError(path, 'using command $unshift to a non array');
+        // $unset
+        if (k === '$unset') {
+          var olderKey = path[path.length - 2];
 
-            if (!type.Array(v))
-              o.unshift(v);
-            else
-              o.unshift.apply(o, v);
-            break;
+          if (!type.Object(parent[olderKey]))
+            throw makeError(path.slice(0, -1), 'using command $unset on a non-object');
+
+          parent[olderKey] = helpers.shallowClone(o);
+          delete parent[olderKey][lastKey];
+
+          if (opts.immutable)
+            helpers.freeze(parent[olderKey]);
+          break;
         }
-      }
-      else {
-        h = hash ? hash + 'λ' + k : k;
 
-        if ('$set' in (spec[k] || {})) {
-          v = spec[k].$set;
+        // $set
+        if (k === '$set') {
+          v = spec.$set;
 
-          // Logging update
-          log[h] = true;
-          o[k] = v;
+          o[lastKey] = v;
         }
-        else if ('$apply' in (spec[k] || {})) {
-          fn = spec[k].$apply;
+
+        // $apply
+        else if (k === '$apply' || k === '$chain') {
+          fn = spec.$apply || spec.$chain;
 
           if (typeof fn !== 'function')
-            throw makeError(path.concat(k), 'using command $apply with a non function');
+            throw makeError(path, 'using command $apply with a non function');
 
-          // Logging update
-          log[h] = true;
-          o[k] = fn.call(null, o[k]);
+          o[lastKey] = fn.call(null, oldValue);
         }
-        else if ('$merge' in (spec[k] || {})) {
-          v = spec[k].$merge;
 
-          if (!type.Object(o[k]))
-            throw makeError(path.concat(k), 'using command $merge on a non-object');
+        // $merge
+        else if (k === '$merge') {
+          v = spec.$merge;
 
-          // Logging update
-          log[h] = true;
-          o[k] = helpers.shallowMerge(o[k], v);
+          if (!type.Object(o[lastKey]) || !type.Object(v))
+            throw makeError(path, 'using command $merge with a non object');
+
+          o[lastKey] = helpers.shallowMerge(o[lastKey], v);
         }
-        else if (opts.shiftReferences &&
-                 ('$push' in (spec[k] || {}) ||
-                  '$unshift' in (spec[k] || {}))) {
-          if ('$push' in (spec[k] || {})) {
-            v = spec[k].$push;
 
-            if (!type.Array(o[k]))
-              throw makeError(path.concat(k), 'using command $push to a non array');
-            o[k] = o[k].concat(v);
-          }
-          if ('$unshift' in (spec[k] || {})) {
-            v = spec[k].$unshift;
+        // $splice
+        if (k === '$splice') {
+          v = spec.$splice;
 
-            if (!type.Array(o[k]))
-              throw makeError(path.concat(k), 'using command $unshift to a non array');
-            o[k] = (v instanceof Array ? v : [v]).concat(o[k]);
-          }
+          if (!type.Array(o[lastKey]))
+            throw makeError(path, 'using command $push to a non array');
 
-          // Logging update
-          log[h] = true;
+          for (i = 0, l = v.length; i < l; i++)
+            o[lastKey] = helpers.splice.apply(null, [o[lastKey]].concat(v[i]));
         }
-        else {
 
-          // If nested object does not exist, we create it
-          if (typeof o[k] === 'undefined')
-            o[k] = {};
+        // $push
+        if (k === '$push') {
+          v = spec.$push;
 
-          // Shifting reference
-          if (opts.shiftReferences)
-            o[k] = helpers.shallowClone(o[k]);
+          if (!type.Array(o[lastKey]))
+            throw makeError(path, 'using command $push to a non array');
 
-          // Recur
-          mutator(
-            o[k],
-            spec[k],
-            path.concat(k)
-          );
+          o[lastKey] = o[lastKey].concat(v);
         }
+
+        // $unshift
+        if (k === '$unshift') {
+          v = spec.$unshift;
+
+          if (!type.Array(o[lastKey]))
+            throw makeError(path, 'using command $unshift to a non array');
+
+          o[lastKey] = [].concat(v).concat(o[lastKey]);
+        }
+
+        // Deep freezing the new value?
+        if (opts.immutable)
+          helpers.deepFreeze(o);
       }
     }
-  })(target, spec);
+    else {
 
-  return Object.keys(log).map(function(hash) {
-    return hash.split('λ');
-  });
-}
+      // If nested object does not exist, we create it
+      if (type.Primitive(o[lastKey]))
+        o[lastKey] = {};
+      else
+        o[lastKey] = helpers.shallowClone(o[lastKey]);
 
-// Exporting
-module.exports = update;
+      // Should we freeze the parent?
+      if (opts.immutable)
+        helpers.freeze(o);
 
-},{"./helpers.js":9,"./type.js":12}],14:[function(require,module,exports){
-// shim for using process in browser
+      for (k in spec)  {
 
-var process = module.exports = {};
-
-process.nextTick = (function () {
-    var canSetImmediate = typeof window !== 'undefined'
-    && window.setImmediate;
-    var canPost = typeof window !== 'undefined'
-    && window.postMessage && window.addEventListener
-    ;
-
-    if (canSetImmediate) {
-        return function (f) { return window.setImmediate(f) };
+        // Recur
+        mutator(
+          o[lastKey],
+          spec[k],
+          path.concat(k),
+          o
+        );
+      }
     }
+  };
 
-    if (canPost) {
-        var queue = [];
-        window.addEventListener('message', function (ev) {
-            var source = ev.source;
-            if ((source === window || source === null) && ev.data === 'process-tick') {
-                ev.stopPropagation();
-                if (queue.length > 0) {
-                    var fn = queue.shift();
-                    fn();
-                }
-            }
-        }, true);
+  mutator(data, spec);
 
-        return function nextTick(fn) {
-            queue.push(fn);
-            window.postMessage('process-tick', '*');
-        };
-    }
+  // Returning data and path log
+  return {
+    data: data.root,
 
-    return function nextTick(fn) {
-        setTimeout(fn, 0);
-    };
-})();
-
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-}
-
-// TODO(shtylman)
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
+    // SHIFT LOG
+    log: Object.keys(log).map(function(hash) {
+      return hash.split('|λ|').slice(1);
+    })
+  };
 };
 
-},{}],15:[function(require,module,exports){
+},{"./helpers.js":8,"./type.js":10}],12:[function(require,module,exports){
 /* global Blob */
 /* global File */
 

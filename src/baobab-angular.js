@@ -1,4 +1,3 @@
-'use strict';
 
 // When requiring Angular it is added to global for some reason
 var angular = global.angular || require('angular') && global.angular;
@@ -7,6 +6,7 @@ var safeDeepClone = require('./safeDeepClone.js');
 
 // Flux Service is a wrapper for the Yahoo Dispatchr
 var BaobabService = function ($rootScope) {
+  'use strict';
 
   this.create = function (tree, options) {
     options = options || {};
@@ -16,7 +16,7 @@ var BaobabService = function ($rootScope) {
       return safeDeepClone('[circular]', [], obj);
     };
 
-    var tree = new Baobab(tree, options);
+    tree = new Baobab(tree, options);
     tree.on('update', function () {
       setTimeout(function () {
         $rootScope.$apply();
@@ -33,6 +33,8 @@ var BaobabService = function ($rootScope) {
 
 angular.module('baobab', [])
   .provider('baobab', function FluxProvider() {
+    'use strict';
+
     this.$get = ['$rootScope', function fluxFactory($rootScope) {
       return new BaobabService($rootScope);
     }];
